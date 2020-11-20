@@ -268,7 +268,9 @@ class Client:
     def info(self, nick, uid=None, link=None, sex=None, age=None, oper=None):
         with self.lock['nicks']:
             if nick not in self.nicks:
-                self.nicks[nick] = dict()
+                self.nicks[nick] = {
+                    x: None for x in ('uid', 'link', 'sex', 'age', 'oper')
+                }
             if uid:
                 self.nicks[nick]['uid'] = uid
             if link:
@@ -322,7 +324,7 @@ class Client:
     def do_notice(self, sender, target, message):
         logger.debug('do_notice: {}, {}, {}'.format(sender, target, message))
         if sender != '*':
-            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'])
+            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
         self.socket.sendall(':{} NOTICE {} :{}'.format(
                 sender,
                 target,
@@ -334,7 +336,7 @@ class Client:
     def do_privmsg(self, sender, target, message):
         logger.debug('do_privmsg: {}, {}, {}'.format(sender, target, message))
         if sender != '*':
-            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'])
+            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
         self.socket.sendall(':{} PRIVMSG {} :{}'.format(
                 sender,
                 target,
@@ -346,7 +348,7 @@ class Client:
     def do_join(self, sender, channel):
         logger.debug('do_join: {}, {}'.format(sender, channel))
         if sender != '*':
-            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'])
+            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
         self.socket.sendall(':{} JOIN {}'.format(
                 sender,
                 channel,
@@ -357,7 +359,7 @@ class Client:
     def do_part(self, sender, channel, msg=None):
         logger.debug('do_part: {}, {}, {}'.format(sender, channel, msg))
         if sender != '*':
-            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'])
+            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
         self.socket.sendall(':{} PART {} :{}'.format(
                 sender,
                 channel,
@@ -463,7 +465,6 @@ class Client:
         logger.debug('handle_join: {}'.format(args))
         if args == '0':
             return
-        rooms = { x['id']: x for x in self.rooms() }
         for chan in args.split(','):
             res = self.get('rooms/{}'.format(chan[1:]))
             if res.status_code != 200:
@@ -478,11 +479,16 @@ class Client:
                     oper=True if usr['admin'] else False,
                 )
             self.do_join(self.user, chan)
+            # FIXME: Make sure malicek sends this in the room
+            #        Until then, a pointless topic
             self.reply('{} {} {} :{}'.format(
                 IRC.RPL_TOPIC.value,
                 self.user,
                 chan,
-                rooms[chan[1:]]['name'],
+                '{}{}'.format(
+                    res.json()['name'],
+                    ' | {}'.format(res.json()['topic']) if res.json()['topic'] else '',
+                ),
             ))
             self.reply('{} {} = {} :{}'.format(
                 IRC.RPL_NAMEREPLY.value,
@@ -492,7 +498,7 @@ class Client:
                     '{}{}'.format(
                         ('@' if x['admin'] else ''),
                         x['name'],
-                    ) for x in rooms[chan[1:]]['users']
+                    ) for x in res.json()['users']
                 )
             ))
             self.reply('{} {} {} :{}'.format(
