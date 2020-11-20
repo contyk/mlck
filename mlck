@@ -34,7 +34,14 @@ logger = logging.getLogger(__name__)
 sel = selectors.DefaultSelector()
 
 class IRC(enum.Enum):
-    # RFC 2812
+    """Provides IRC response code mappings.
+
+    An enum class, it holds response codes for each defined IRC
+    keyword response.  Helps with readability.  Only the actual
+    codes are sent, however.
+
+    Based on RFC 2812.
+    """
     RPL_WELCOME = '001'
     RPL_YOURHOST = '002'
     RPL_CREATED = '003'
@@ -75,8 +82,26 @@ class IRC(enum.Enum):
 
 class Client:
     """Provides an abstraction of the connection session.
+
+    Instances represent each individual connection, hold its client socket,
+    Malíček session, and various collected metadata.
     """
     def __init__(self, sock):
+        """Class constructor.
+
+        Initializes instance variables; these include the socket reference,
+        the endpoint, the Malíček session reference, the user nickname, their
+        password, the channels they've joined, information about other nicks
+        they've collected, the automatic periodic thread reference, and thread
+        locks for shared resources.
+
+        Requires the socket reference.
+
+        The default nickname is '*', as per RFC 2812.
+
+        :param sock: The socket reference of this connection
+        :returns: A Client instance
+        """
         self.socket = sock
         self.endpoint = None
         self.session = None
@@ -100,7 +125,9 @@ class Client:
 
     def __del__(self):
         """Destroys the session instance.
-        Attempts to log off, properly destroying hte session.
+
+        Attempts to log off, properly destroys the session and clears the
+        Client.periodic() thread.  Called automatically by GC.
         """
         if self.registered():
             self.logout()
@@ -109,7 +136,11 @@ class Client:
 
     def setup(self):
         """Creates an instance of the session.
-        Automatically logs in and maintains the session cookie.
+
+        Automatically logs in and maintains the session cookie.  Clears the
+        session upon failure not to confuse Client.registered().
+
+        :returns: True on success, False otherwise
         """
         self.session = requests.Session()
         self.endpoint = ENDPOINT
@@ -118,9 +149,22 @@ class Client:
         if self.login():
             self.auto.start()
             return True
+        self.session = None
         return False
 
     def handle(self, msg):
+        """Consume messages from the socket.
+
+        The class entry point.  Messages extracted from the socket stream
+        are passed to this method as a byte sequence.
+
+        Decodes the input, splits it into commands and arguments, and directs
+        the data to respective handlers.
+
+        Provides very basic checking for sanity.
+
+        :param msg: Byte sequence representing message input
+        """
         logger.debug('Handling input: {}'.format(msg))
         msg = msg.decode(ENCODING)
         pos = msg.find(' ')
@@ -132,20 +176,16 @@ class Client:
             args = msg[pos + 1:]
         if not cmd:
             return
-        if not args and \
-            (cmd == 'NICK' or cmd == 'USER' or cmd == 'PASS' or \
-             cmd == 'JOIN' or cmd == 'PART' or cmd == 'TOPIC' or cmd == 'NAMES' or \
-             cmd == 'PRIVMSG' or cmd == 'NOTICE'):
-            logger.debug('Received {} with not enough parameters: {}'.format(cmd, args))
-            self.error(IRC.ERR_NEEDMOREPARAMS, 'Not enough parameters.')
+        if not args and cmd in ('NICK', 'USER', 'PASS', 'PART', 'TOPIC',
+                'NAMES', 'PRIVMSG', 'NOTICE'):
+            logger.debug('Received {} with not enough parameters.'.format(cmd))
+            self.error(IRC.ERR_NEEDMOREPARAMS)
             return
-        if self.registered() and \
-            (cmd == 'NICK' or cmd == 'USER' or cmd == 'PASS'):
-            self.error(IRC.ERR_ALREADYREGISTERED, 'You are already logged in.')
+        if self.registered() and cmd in ('NICK', 'USER', 'PASS'):
+            self.error(IRC.ERR_ALREADYREGISTERED)
             return
-        elif not self.registered() and \
-            (cmd != 'NICK' and cmd != 'USER' and cmd != 'PASS'):
-            self.error(IRC.ERR_NOTREGISTERED, 'You must log in to continue.')
+        elif not self.registered() and cmd not in ('NICK', 'USER', 'PASS'):
+            self.error(IRC.ERR_NOTREGISTERED)
             return
         if cmd == 'NICK':
             self.handle_nick(args)
@@ -157,6 +197,8 @@ class Client:
             self.handle_quit()
         elif cmd == 'PING':
             self.handle_ping(args)
+        elif cmd == 'PONG':
+            self.handle_pong(args)
         elif cmd == 'LIST':
             self.handle_list(args)
         elif cmd == 'JOIN':
@@ -171,13 +213,32 @@ class Client:
             self.handle_privmsg(args)
         elif cmd == 'NOTICE':
             self.handle_notice(args)
+        elif cmd == 'WHO':
+            self.handle_who(args)
+        elif cmd == 'WHOIS':
+            self.handle_whois(args)
+        elif cmd == 'WHOWAS':
+            self.handle_whowas(args)
         else:
-            self.error(IRC.ERR_UNKNOWNCOMMAND, 'Unknown command')
+            self.error(IRC.ERR_UNKNOWNCOMMAND)
             logger.warning('Unknown command: {}'.format(cmd))
             logger.warning('Unknown arguments: {}'.format(args))
             return
 
     def reply(self, msg):
+        """Send a standard reply in response to a command.
+
+        Only so slightly simplifies sending code responses back to the client.
+        The method only prefixes each message with the server name.
+
+        Unfortunately, as each message has a different format, this is the
+        best we can currently offer.
+
+        The message must include everything to be sent: the code, the possible
+        arguments, additional human readable messages and more.
+
+        :param msg: The message to send
+        """
         logger.debug('Responding with {}'.format(msg))
         self.socket.sendall(
             ':{} '.format(SERVER).encode(ENCODING) + \
@@ -185,10 +246,38 @@ class Client:
             b'\r\n'
         )
 
-    def error(self, err, response):
+    def error(self, err, response=None):
+        """Send an error reply in response to a command.
+
+        Simplifies error responses.  The response message is optional and
+        standard messages for the given error codes are used, if known.
+
+        If not, the default error message is the error code constant.
+
+        This is nott he same as the ERROR command.  For that one, refer
+        to Client.do_error().
+
+        :param err: The error code, an enum of the IRC class
+        :param response: Optional error message
+        """
         logger.debug('Responding with error: {}'.format(err))
         if err == IRC.ERR_NEEDMOREPARAMS:
-            pass
+            response = response or 'Not enough parameters given.'
+        elif err == IRC.ERR_UNKNOWNCOMMAND:
+            response = response or 'Command not implemented.'
+        elif err == IRC.ERR_PASSWDMISMATCH:
+            response = response or 'Authentication failed, sorry.'
+        elif err == IRC.ERR_ALREADYREGISTERED:
+            response = response or 'You are already logged in.'
+        elif err == IRC.ERR_NOTREGISTERED:
+            response = response or 'You must log in to continue.'
+        elif err == IRC.ERR_NOSUCHNICK:
+            respose = respose or 'Private messaging is unsupported.'
+        elif err == IRC.ERR_NOTEXTTOSEND:
+            response = response or 'No message specified.'
+        elif err == IRC.ERR_CANNOTSENDTOCHAN:
+            response = response or 'You must join the channel first.'
+        response = response or err
         self.reply('{} {} :{}'.format(
             err.value,
             self.user,
@@ -198,6 +287,18 @@ class Client:
     # TODO: Handle room errors
     # TODO: Handle OPER MODEs
     def periodic(self):
+        """Automatic periodic check of active channels.
+
+        Periodically checks all channels the user has joined, querying for
+        new messages, users joining or parting, mode changes and more.
+
+        Triggers relevant IRC actions to simulate the activity.  Maintains
+        presence via keepalive calls, whenever required.
+
+        The backbone of mlck.  Runs in an idependent thread.
+
+        Note this holds the global channels lock.
+        """
         while self.registered():
             self.lock['channels'].acquire()
             for chan in self.channels.keys():
@@ -211,12 +312,11 @@ class Client:
                         break
                     messages.append(msg)
                 messages.reverse()
-                if chan in self.channels:
-                    if messages:
-                        self.channels[chan]['seen'] = messages[-1]
-                    if int(time.time()) - self.channels[chan]['activity'] > 15 * 60:
-                        self.channels[chan]['activity'] = int(time.time())
-                        self.keepalive(chan)
+                if messages:
+                    self.channels[chan]['seen'] = messages[-1]
+                if int(time.time()) - self.channels[chan]['activity'] > 15 * 60:
+                    self.channels[chan]['activity'] = int(time.time())
+                    self.keepalive(chan)
                 for usr in res.json()['users']:
                     self.info(
                         usr['name'],
@@ -246,12 +346,23 @@ class Client:
                     self.do_privmsg(
                         msg['nick'] if msg['nick'] else '*',
                         chan,
-                        emoji(msg['message']) if not msg['private'] else '\x02[pst!] {}\x0f'.format(emoji(msg['message']))
+                        emoji(msg['message']) if not msg['private'] else '\x02[{}, pst!] {}\x0f'.format(', '.join(msg['private']), emoji(msg['message']))
                     )
             self.lock['channels'].release()
             time.sleep(REFRESH)
 
     def keepalive(self, chan):
+        """Send a keepalive message.
+
+        Generates a simple, hopefully unique keepalive message and sends it
+        as a broken private message to the channel of choice.
+
+        Prevents idling out even when inactive.
+
+        The message takes form of "[ malíček/keepalive <16 bytes of hex> ]".
+
+        :param chan: Channel name
+        """
         msg = '[ malíček/keepalive {} ]'.format(
             ''.join(random.choice(string.hexdigits) for i in range(16))
         )
@@ -266,6 +377,24 @@ class Client:
         )
 
     def info(self, nick, uid=None, link=None, sex=None, age=None, oper=None):
+        """Handle user information records
+
+        Fetch and, optionally, store user details.  Different handles provide
+        different details we may want to gather over time.
+
+        Returns a dictionary of all the data configured for a given nicknames
+        so far.  Keys include uid (the numerical system ID), link (the string
+        form of the ID, sanitized nickname), sex, age and oper (True if the
+        user is a moderator).
+
+        :param nick: Nickname to query or update
+        :param uid: Optional, save the numerical uid
+        :param link: Optional, save the string id
+        :param sex: Optional, save the sex
+        :param age: Optional, save age
+        :param oper: Optional, save the operator status
+        :returns: A dictionary of all stored values
+        """
         with self.lock['nicks']:
             if nick not in self.nicks:
                 self.nicks[nick] = {
@@ -284,12 +413,28 @@ class Client:
             return self.nicks[nick]
 
     def registered(self):
+        """Check if our connection has been registered.
+
+        Most of our functionality depends on having a registered session.
+        This method checks whether we have one.
+
+        :returns: True if we have a working session, False otherwise
+        """
         if self.session:
             return True
         return False
 
     # TODO: Needs a timeout
     def get(self, handle):
+        """Fetch Malíček handles using GET.
+
+        A simple wrapper for fetching backend handles.  Returns raw request
+        response objects.  Callers may check the status code or extract the data
+        using the json() method.
+
+        :param handle: API handle, appended to "ENDPOINT/"
+        :returns: Request response object
+        """
         return self.session.get(
             '{}/{}'.format(self.endpoint, handle)
         )
@@ -297,11 +442,34 @@ class Client:
     # TODO: Needs a timeout
     def post(self, handle, data=None):
         return self.session.post(
+        """Fetch Malíček handles using POST
+
+        A simple wrapper for fetching backend handles.  Returns raw request
+        response objects.  Callers may check the status code or extract the data
+        using the json() method.
+
+        Optionally, a data structure can be passed representing the data to
+        send.
+
+        :param handle: API handle, appended to "ENDPOINT/"
+        :param data: Data to send, if any
+        :returns: Request response object
+        """
             '{}/{}'.format(self.endpoint, handle),
             json=data,
         )
 
     def login(self):
+        """Initiate the Malíček session.
+
+        Calls the /login resource, creating the session.  Having one is
+        generally required for almost everything else.  Only works after
+        PASS and NICK.  Should be called after USER.
+
+        Clears the password from memory.
+
+        :returns: True if we managed to log in, False otherwise
+        """
         logger.debug('Logging in.')
         r = self.post(
             'login',
@@ -314,14 +482,61 @@ class Client:
         return True if r == 200 else False
 
     def logout(self):
+        """Terminate the Malíček session.
+
+        Calls the /logout resource.  The only real use is a cleanup, so
+        this gets called from the destructor.
+        """
         logger.debug('Logging out.')
         self.get('logout')
 
     def rooms(self):
+        """Fetch the /rooms resource.
+
+        This is a shorthand for fetching the list of rooms.
+
+        :returns: Request response
+        """
         logger.debug('Fetching rooms.')
         return self.get('rooms').json()
 
+    def do_error(self, message=None):
+        """Send the ERROR command.
+
+        These are emitted by the server under special circumstances and they
+        always target our only user, self.user.
+
+        Not to be used for ERR replies.  See Client.error() for those.
+
+        If no message is specified, "An error is an error." is sent.
+
+        :param message: The error message to send
+        """
+        logger.debug('do_error: {}'.format(message))
+        message = message or 'An error is an error.'
+        self.socket.sendall(':{} ERROR :{}'.format(
+                SERVER,
+                message,
+            ).encode(ENCODING) + \
+            b'\r\n',
+        )
+
     def do_notice(self, sender, target, message):
+        """Send the NOTICE command.
+
+        Sends a NOTICE message on behalf of the sender.
+
+        The sender is the sender's nickname, which is translated into a
+        virtual username formed from the link ID + @alik.cz.  If the link
+        ID is unavailable, *@alik.cz is used instead.
+
+        In the rare event of sending PART of behalf of *, don't do any
+        user mangling.
+
+        :param sender: The messaging person, their NICK
+        :param target: The target, typically a channel
+        :param message: The message to send
+        """
         logger.debug('do_notice: {}, {}, {}'.format(sender, target, message))
         if sender != '*':
             sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
@@ -334,6 +549,21 @@ class Client:
         )
 
     def do_privmsg(self, sender, target, message):
+        """Send the PRIVMSG command.
+
+        Sends a PRIVMSG message on behalf of the sender.
+
+        The sender is the sender's nickname, which is translated into a
+        virtual username formed from the link ID + @alik.cz.  If the link
+        ID is unavailable, *@alik.cz is used instead.
+
+        In the rare event of sending PART of behalf of *, don't do any
+        user mangling.
+
+        :param sender: The messaging person, their NICK
+        :param target: The target, typically a channel
+        :param message: The message to send
+        """
         logger.debug('do_privmsg: {}, {}, {}'.format(sender, target, message))
         if sender != '*':
             sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
@@ -346,6 +576,20 @@ class Client:
         )
 
     def do_join(self, sender, channel):
+        """Send the JOIN command.
+
+        Sends JOIN to the channel on behalf of the sender.
+
+        The sender is the sender's nickname, which is translated into a
+        virtual username formed from the link ID + @alik.cz.  If the link
+        ID is unavailable, *@alik.cz is used instead.
+
+        In the rare event of sending PART of behalf of *, don't do any
+        user mangling.
+
+        :param sender: The joining person, their NICK
+        :param channel: The channel they are joining
+        """
         logger.debug('do_join: {}, {}'.format(sender, channel))
         if sender != '*':
             sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
@@ -357,6 +601,22 @@ class Client:
         )
 
     def do_part(self, sender, channel, msg=None):
+        """Send the PART command.
+
+        Sends PART to the channel on behalf of the sender, with an optional
+        parting message.
+
+        The sender is the sender's nickname, which is translated into a
+        virtual username formed from the link ID + @alik.cz.  If the link
+        ID is unavailable, *@alik.cz is used instead.
+
+        In the rare event of sending PART of behalf of *, don't do any
+        user mangling.
+
+        :param sender: The leaving person, their NICK
+        :param channel: The channel they are leaving
+        :param msg: Optional parting message
+        """
         logger.debug('do_part: {}, {}, {}'.format(sender, channel, msg))
         if sender != '*':
             sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
@@ -368,12 +628,23 @@ class Client:
             b'\r\n'
         )
 
-    # TODO: Respond with error once registered
     def handle_nick(self, args):
+        """Handle NICK commands.
+
+        Set the nickname and use it Alík's username.  It doesn't make
+        sense to change it later as it's your immutable remote identifier.
+
+        :param args: <nickname>
+        """
         logger.debug('handle_nick: {}'.format(args))
         self.user = args
 
     def handle_user(self):
+        """Handle USER commands.
+
+        Finishes the registration.  We don't actually care about the
+        arguments as all, so we ignore them all.  No one will see you.
+        """
         logger.debug('handle_user: (no args)')
         if self.user != '*' and self.password and self.setup():
             self.reply('{} {} :Welcome to Malíček ({}), {}.'.format(
@@ -383,20 +654,32 @@ class Client:
                 self.user,
             ))
         else:
-            self.reply('{} {} :Authentication failed, sorry.'.format(
-                IRC.ERR_PASSWDMISMATCH.value,
-                self.user,
-            ))
+            self.error(IRC.ERR_PASSWDMISMATCH)
             sel.unregister(self.socket)
             self.socket.close()
 
     def handle_pass(self, args):
+        """Handle PASS commands.
+
+        Required for registering a session with us.  This needs to preceed
+        the USER command which itself finishes the registration.
+
+        :param args: <password>
+        """
         logger.debug('handle_pass: (args hidden)')
         self.password = args
 
     # TODO: Leave all channels once done debugging
     # TODO: Respond with ERROR, huh
     def handle_quit(self):
+        """Handle QUIT commands.
+
+        The client is quitting.  Part all the active channels, unregister
+        our selector and close the socket, unless they've already done that.
+
+        Except that we don't do part the channels yet.  It's too early in
+        the development and it could hinder testing with unnecessary spam.
+        """
         logger.debug('handle_quit: (no args)')
         sel.unregister(self.socket)
         try:
@@ -405,18 +688,76 @@ class Client:
             pass
 
     def handle_ping(self, args):
-        logger.debug('handle_ping: (no args)')
-        self.reply('PONG {}'.format(args))
+        """Handle PING commands.
 
+        Respond with an appropriate PONG.  Since we are a virtual
+        server, we speak for all of them.  In the two argument form,
+        the first argument is the origin, such as the user name or
+        another server, and the other argument is the target.
+
+        In a single argument form, only the target is given.
+
+        :param args: <server> [<server>]
+        """
+        logger.debug('handle_ping: {}'.format(args))
+        self.reply('PONG {} {}'.format(
+            SERVER,
+            args.split(' ')[-1],
+        ))
+
+    def handle_pong(self, args):
+        """Handle PONG commands.
+
+        Responses to PINGs.  We don't send any PINGs but it's okay
+        if the client somehow sends these.  Just drop them.
+
+        :param args: <server> [<server>]
+        """
+        logger.debug('handle_pong: {}'.format(args))
+        return
+
+    def handle_error(self, args):
+        """Handle ERROR commands.
+
+        Not implemented.
+
+        :param args: ...
+        """
+        logger.debug('handle_error: {}'.format(args))
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
+
+    # TODO: Implement this
     def handle_names(self, args):
         logger.debug('handle_names: {}'.format(args))
-        pass
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
-    def handle_topic(self):
+    # TODO: Implement this
+    def handle_topic(self, args):
+        """Handle TOPIC commands.
+
+        Not implemented.
+
+        :param args: ...
+        """
         logger.debug('handle_topic: (no args)')
-        pass
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
+    # TODO: Add topic to name (blocked by Malicek support)
     def handle_list(self, args):
+        """Handle LIST commands.
+
+        Queries existing channels.  Lists all channels without
+        arguments, or limits the output to channels that match one
+        of the provided channel names.  These may contain the '*'
+        wildcard, which we translate to '.*' in a regex.
+
+        The optional target argument is ignored.
+
+        The output includes the number of users in that channel,
+        as well as its actual name.
+
+        :param args: [<channel>[,<channel>]* [<target>]]
+        """
         logger.debug('handle_list: {}'.format(args))
         only = set()
         if args:
@@ -449,23 +790,70 @@ class Client:
         ))
 
     # TODO: Implement this
-    # Call update_users or something
     def handle_who(self, args):
+        """Handle WHO commands.
+
+        Not implemented.
+
+        :param args: [<mask> [o]]
+        """
         logger.debug('handle_who: {}'.format(args))
-        pass
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     # TODO: Implement this
-    # Call update_users or something
     def handle_whois(self, args):
-        logger.debug('handle_whois: {}'.format(args))
-        pass
+        """Handle WHOIS commands.
 
-    # TODO: Handle 0 properly
+        Not implemented.
+
+        :param args: [target] <mask>[,<mask>]*
+        """
+        logger.debug('handle_whois: {}'.format(args))
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
+
+    # TODO: Implement this
+    def handle_whowas(self, args):
+        """Handle WHOWAS commands.
+
+        Not implemented.
+
+        :param args: <nick>[,<nick>]* [<count> [<target>]]
+        """
+        logger.debug('handle_whowas: {}'.format(args))
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
+
+    # TODO: Backlog whispers
     def handle_join(self, args):
+        """Handle JOIN commands.
+
+        Attempts to join the specified channels.  Potential keys are
+        of no use to us so they're ignored.  JOIN must be confirmed
+        upon success.  The client should also receive the channel topic
+        and the list of users, including self.  Additionaly, we also
+        send all visible backlog messages as the '*' user.
+
+        Joining "0" is an equivalent of parting all the currently joined
+        channels.
+
+        Joining with no arguments is non-standard but common.  We accept
+        it and do nothing.
+
+        :param args: [0|<channel>[,<channel>]* [<key>[,<key>]*]]
+        """
         logger.debug('handle_join: {}'.format(args))
-        if args == '0':
+        if not args:
             return
-        for chan in args.split(','):
+        if args == '0':
+            self.lock['channels'].acquire()
+            for chan in channels:
+                del self.channels[chan]
+                self.post(
+                    'rooms/{}'.format(chan[1:]),
+                    { 'action': 'leave' }
+                )
+                self.do_part(self.user, chan)
+            self.lock['channels'].release()
+        for chan in args.split(' ')[0].split(','):
             res = self.get('rooms/{}'.format(chan[1:]))
             if res.status_code != 200:
                 continue
@@ -479,8 +867,6 @@ class Client:
                     oper=True if usr['admin'] else False,
                 )
             self.do_join(self.user, chan)
-            # FIXME: Make sure malicek sends this in the room
-            #        Until then, a pointless topic
             self.reply('{} {} {} :{}'.format(
                 IRC.RPL_TOPIC.value,
                 self.user,
@@ -528,6 +914,17 @@ class Client:
             self.lock['channels'].release()
 
     def handle_part(self, args):
+        """Handle PART commands.
+
+        Leaves the selected list of channels.  We do not have to
+        check their presence as the backend doesn't care, although
+        we could potentially cut a few nonsensical requests.
+
+        We don't have anywhere to send the parting message so we
+        simply ignore it.
+
+        :param args: <channel>[,<channel>]*[ :<message>]
+        """
         logger.debug('handle_part: {}'.format(args))
         for chan in args.split(' ')[0].split(','):
             self.lock['channels'].acquire()
@@ -542,15 +939,32 @@ class Client:
     # TODO: Handle whispering
     # TODO: Remember colors per room and use them
     def handle_privmsg(self, args):
+        """Handle PRIVMSG commands.
+
+        The standard IRC messaging method, sends commands to channels
+        or users.  Due to Alík's limitations, private messages cannot
+        work outside of channels.  Messaging users is therefore disabled.
+
+        Sending messages to channels one hasn't joined is similarly
+        impossible and returns an error.
+
+        ACTION messages are converted to "*<text>*" and sent as regular
+        messages instead.  SOH is stripped.
+
+        :param args: <msgtarget> <text>
+        """
         logger.debug('handle_privmsg: {}'.format(args))
         chan, msg = args.split(' ', 1)
         if not chan.startswith('#'):
-            pass
+            self.error(IRC.ERR_NOSUCHNICK)
+            return
         if len(msg) < 2:
-            pass
+            self.error(IRC.ERR_NOTEXTTOSEND)
+            return
         self.lock['channels'].acquire()
         if chan not in self.channels:
-            pass
+            self.error(IRC.ERR_CANNOTSENDTOCHAN)
+            return
         msg = msg[1:]
         if msg.startswith('\x01') and msg.endswith('\x01'):
             msg = msg.replace('\x01ACTION ', '*')
@@ -567,12 +981,35 @@ class Client:
         self.channels[chan]['activity'] = int(time.time())
         self.lock['channels'].release()
 
-    # TODO: Implement this
     def handle_notice(self, args):
+        """Handle NOTICE commands.
+
+        This just calls handle_privmsg() as they're virtually
+        identical in our context.
+
+        :param args: <msgtarget> <text>
+        """
         logger.debug('handle_notice: {}'.format(args))
-        pass
+        self.handle_privmsg(args)
+
+def sanitize(nick):
+    """Sanitize nicks that are not generally acceptable
+    or break the IRC protocol.
+
+    Namly this replaces spaces with underscores.
+
+    :param nick: The original nickname
+    :returns: Modified nickname
+    """
+    return nick.replace(' ', '_')
 
 def emoji(msg):
+    """Replace Alík's emoticons with corresponding emojis.
+    These are not exact match but are close enough.
+
+    :param msg: The original message
+    :returns: Message with emoji substitutions
+    """
     msg = msg.replace('[:-)]', '🙂')
     msg = msg.replace('[:->]', '😀')
     msg = msg.replace('[:-D]', '😆')
@@ -613,6 +1050,15 @@ def emoji(msg):
     return msg
 
 def accept(sock):
+    """Accept new connections.
+
+    Accepts all incoming connections, configures them as non-blocking and
+    registers them with our master selector.
+
+    Creates a buffer and a Client instance for each connection.
+
+    :param sock: Listening socket with the pending connection request
+    """
     conn = sock.accept()[0]
     conn.setblocking(False)
     sel.register(
@@ -622,6 +1068,16 @@ def accept(sock):
     )
 
 def handle(key, mask):
+    """Handle read evenets from the selector.
+
+    Reads all pending data into a buffer, splitting it by CRLF to generate
+    IRC messages.  These are later passed to Client.handle().
+
+    Closes sockets and unregisters them from the selector when appropriate.
+
+    :param key: The selector key object
+    :param mask: The selector event mask
+    """
     sock = key.fileobj
     data = key.data
     if mask & selectors.EVENT_READ:
@@ -641,6 +1097,12 @@ def handle(key, mask):
         break
 
 def main():
+    """The main body of the application.
+
+    Sets everything up and begins listening for connections.
+
+    Relies on selectors for input.
+    """
     logger.setLevel(logging.DEBUG)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
