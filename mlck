@@ -1,0 +1,637 @@
+#!/usr/bin/python3
+import argparse
+import configparser
+import enum
+import logging
+import os
+import random
+import re
+import requests
+import selectors
+import socket
+import string
+import threading
+import time
+import types
+
+# Server name
+SERVER = 'localhost'
+# Refresh in seconds for periodic
+REFRESH = 3
+# IRC messages are pretty short and should fit with all the commands
+BUFFER = 1024
+# Use UTF-8 for all network communication
+ENCODING = 'utf-8'
+# FIXME: Get from settings per channel
+COLOR = '#424242'
+
+# Should be configurable
+ENDPOINT = 'https://alik.contyk.dev/api'
+
+logging.basicConfig(format='%(levelname)s : %(message)s', level=logging.INFO)
+
+logger = logging.getLogger(__name__)
+sel = selectors.DefaultSelector()
+
+class IRC(enum.Enum):
+    # RFC 2812
+    RPL_WELCOME = '001'
+    RPL_YOURHOST = '002'
+    RPL_CREATED = '003'
+    RPL_MYINFO = '004'
+    RPL_BOUNCE = '005'
+    RPL_USERHOST = '302'
+    RPL_ISON = '303'
+    RPL_AWAY = '301'
+    RPL_UNAWAY = '305'
+    RPL_NOWAWAY = '306'
+    RPL_WHOISUSER = '311'
+    RPL_WHOISSERVER = '312'
+    RPL_WHOISOPERATOR = '313'
+    RPL_ENDOFWHO = '315'
+    RPL_WHOISIDLE = '317'
+    RPL_ENDOFWHOIS = '318'
+    RPL_WHOISCHANNELS = '319'
+    RPL_WHOWASUSER = '314'
+    RPL_ENDOFWHOWAS = '369'
+    RPL_LISTSTART = '321'
+    RPL_LIST = '322'
+    RPL_LISTEND = '323'
+    RPL_TOPIC = '332'
+    RPL_WHOREPLY = '352'
+    RPL_NAMEREPLY = '353'
+    RPL_ENDOFNAMES = '366'
+    ERR_NOSUCHNICK = '401'
+    ERR_NOSUCHCHANNEL = '403'
+    ERR_CANNOTSENDTOCHAN = '404'
+    ERR_NORECIPIENT = '411'
+    ERR_NOTEXTTOSEND = '412'
+    ERR_UNKNOWNCOMMAND = '421'
+    ERR_NOTREGISTERED = '451'
+    ERR_NEEDMOREPARAMS = '461'
+    ERR_ALREADYREGISTERED = '462'
+    ERR_PASSWDMISMATCH = '464'
+    # FIXME: More to add
+
+class Client:
+    """Provides an abstraction of the connection session.
+    """
+    def __init__(self, sock):
+        self.socket = sock
+        self.endpoint = None
+        self.session = None
+        self.user = '*'
+        self.password = None
+        # Dict of channels we're in
+        # Values are another dict, with `seen` and `activity` as keys
+        self.channels = dict()
+        # All users we know about, userful for user IDs in JOIN & PART,
+        # and potentially also for WHO, WHOIS, NAMES and ISON
+        self.nicks = dict()
+        # Our auto thread for fetching messages and other updates
+        self.auto = threading.Thread(target=self.periodic, daemon=True)
+
+    def __del__(self):
+        """Destroys the session instance.
+        Attempts to log off, properly destroying hte session.
+        """
+        if self.registered():
+            self.logout()
+            self.session = None
+            self.auto.join()
+
+    def setup(self):
+        """Creates an instance of the session.
+        Automatically logs in and maintains the session cookie.
+        """
+        self.session = requests.Session()
+        self.endpoint = ENDPOINT
+        if self.endpoint.endswith('/'):
+            self.endpoint = self.endpoint[0:-1]
+        if self.login():
+            self.auto.start()
+            return True
+        return False
+
+    def handle(self, msg):
+        logger.debug('Handling input: {}'.format(msg))
+        msg = msg.decode(ENCODING)
+        pos = msg.find(' ')
+        if pos == -1:
+            cmd = msg
+            args = None
+        else:
+            cmd = msg[0:pos]
+            args = msg[pos + 1:]
+        if not cmd:
+            return
+        if not args and \
+            (cmd == 'NICK' or cmd == 'USER' or cmd == 'PASS' or \
+             cmd == 'JOIN' or cmd == 'PART' or cmd == 'TOPIC' or cmd == 'NAMES' or \
+             cmd == 'PRIVMSG' or cmd == 'NOTICE'):
+            logger.debug('Received {} with not enough parameters: {}'.format(cmd, args))
+            self.error(IRC.ERR_NEEDMOREPARAMS, 'Not enough parameters.')
+            return
+        if self.registered() and \
+            (cmd == 'NICK' or cmd == 'USER' or cmd == 'PASS'):
+            self.error(IRC.ERR_ALREADYREGISTERED, 'You are already logged in.')
+            return
+        elif not self.registered() and \
+            (cmd != 'NICK' and cmd != 'USER' and cmd != 'PASS'):
+            self.error(IRC.ERR_NOTREGISTERED, 'You must log in to continue.')
+            return
+        if cmd == 'NICK':
+            self.handle_nick(args)
+        elif cmd == 'USER':
+            self.handle_user()
+        elif cmd == 'PASS':
+            self.handle_pass(args)
+        elif cmd == 'QUIT':
+            self.handle_quit()
+        elif cmd == 'PING':
+            self.handle_ping(args)
+        elif cmd == 'LIST':
+            self.handle_list(args)
+        elif cmd == 'JOIN':
+            self.handle_join(args)
+        elif cmd == 'PART':
+            self.handle_part(args)
+        elif cmd == 'TOPIC':
+            self.handle_topic()
+        elif cmd == 'NAMES':
+            self.handle_names(args)
+        elif cmd == 'PRIVMSG':
+            self.handle_privmsg(args)
+        elif cmd == 'NOTICE':
+            self.handle_notice(args)
+        else:
+            self.error(IRC.ERR_UNKNOWNCOMMAND, 'Unknown command')
+            logger.warning('Unknown command: {}'.format(cmd))
+            logger.warning('Unknown arguments: {}'.format(args))
+            return
+
+    def reply(self, msg):
+        logger.debug('Responding with {}'.format(msg))
+        self.socket.sendall(
+            ':{} '.format(SERVER).encode(ENCODING) + \
+            msg.encode(ENCODING) + \
+            b'\r\n'
+        )
+
+    def error(self, err, response):
+        logger.debug('Responding with error: {}'.format(err))
+        if err == IRC.ERR_NEEDMOREPARAMS:
+            pass
+        self.reply('{} {} :{}'.format(
+            err.value,
+            self.user,
+            response,
+        ))
+
+    # TODO: Handle room errors
+    # TODO: Handle OPER MODEs
+    def periodic(self):
+        while self.registered():
+            channels = self.channels
+            for chan in channels.keys():
+                logger.debug('Running a periodic refresh for {}.'.format(chan))
+                res = self.get('rooms/{}'.format(chan[1:]))
+                messages = list()
+                for msg in res.json()['messages']:
+                    if chan not in self.channels:
+                        return
+                    if msg == self.channels[chan]['seen']:
+                        break
+                    messages.append(msg)
+                messages.reverse()
+                if chan in self.channels:
+                    if messages:
+                        self.channels[chan]['seen'] = messages[-1]
+                    if int(time.time()) - self.channels[chan]['activity'] > 15 * 60:
+                        self.channels[chan]['activity'] = int(time.time())
+                        self.keepalive(chan)
+                for usr in res.json()['users']:
+                    self.info(
+                        usr['name'],
+                        uid=usr['id'],
+                        link=usr['link'],
+                        sex=usr['sex'],
+                        age=usr['age'],
+                        oper=True if usr['admin'] else False,
+                    )
+                for msg in messages:
+                    if msg['nick'] == self.user:
+                        continue
+                    if msg['type'] == 'system':
+                        if msg['event']['type'] == 'join':
+                            self.do_join(
+                                msg['event']['source'],
+                                chan,
+                            )
+                            continue
+                        if msg['event']['type'] == 'part' or msg['event']['type'] == 'kick':
+                            self.do_part(
+                                msg['event']['source'] if msg['event']['source'] else msg['event']['target'],
+                                chan,
+                                msg['message'],
+                            )
+                            continue
+                    self.do_privmsg(
+                        msg['nick'] if msg['nick'] else '*',
+                        chan,
+                        emoji(msg['message']) if not msg['private'] else '\x02[pst!] {}\x0f'.format(emoji(msg['message']))
+                    )
+            time.sleep(REFRESH)
+
+    def keepalive(self, chan):
+        msg = '[ malíček/keepalive {} ]'.format(
+            ''.join(random.choice(string.hexdigits) for i in range(16))
+        )
+        self.post(
+            'rooms/{}'.format(chan[1:]),
+            {
+                'action': 'post',
+                'to': -1,
+                'message': msg,
+                'color': COLOR,
+            }
+        )
+
+    def info(self, nick, uid=None, link=None, sex=None, age=None, oper=None):
+        if nick not in self.nicks:
+            self.nicks[nick] = dict()
+        if uid:
+            self.nicks[nick]['uid'] = uid
+        if link:
+            self.nicks[nick]['link'] = link
+        if sex:
+            self.nicks[nick]['sex'] = sex
+        if age:
+            self.nicks[nick]['age'] = age
+        if oper:
+            self.nicks[nick]['oper'] = oper
+        return self.nicks[nick]
+
+    def registered(self):
+        if self.session:
+            return True
+        return False
+
+    def get(self, handle):
+        return self.session.get(
+            '{}/{}'.format(self.endpoint, handle)
+        )
+
+    def post(self, handle, data=None):
+        return self.session.post(
+            '{}/{}'.format(self.endpoint, handle),
+            json=data,
+        )
+
+    def login(self):
+        logger.debug('Logging in.')
+        r = self.post(
+            'login',
+            {
+                'user': self.user,
+                'pass': self.password
+            }
+        ).status_code
+        self.password = None
+        return True if r == 200 else False
+
+    def logout(self):
+        logger.debug('Logging out.')
+        self.get('logout')
+
+    def rooms(self):
+        logger.debug('Fetching rooms.')
+        return self.get('rooms').json()
+
+    def do_notice(self, sender, target, message):
+        logger.debug('do_notice: {}, {}, {}'.format(sender, target, message))
+        if sender != '*':
+            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'])
+        self.socket.sendall(':{} NOTICE {} :{}'.format(
+                sender,
+                target,
+                message,
+            ).encode(ENCODING) + \
+            b'\r\n'
+        )
+
+    def do_privmsg(self, sender, target, message):
+        logger.debug('do_privmsg: {}, {}, {}'.format(sender, target, message))
+        if sender != '*':
+            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'])
+        self.socket.sendall(':{} PRIVMSG {} :{}'.format(
+                sender,
+                target,
+                message,
+            ).encode(ENCODING) + \
+            b'\r\n'
+        )
+
+    def do_join(self, sender, channel):
+        logger.debug('do_join: {}, {}'.format(sender, channel))
+        if sender != '*':
+            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'])
+        self.socket.sendall(':{} JOIN {}'.format(
+                sender,
+                channel,
+            ).encode(ENCODING) + \
+            b'\r\n'
+        )
+
+    def do_part(self, sender, channel, msg=None):
+        logger.debug('do_part: {}, {}, {}'.format(sender, channel, msg))
+        if sender != '*':
+            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'])
+        self.socket.sendall(':{} PART {} :{}'.format(
+                sender,
+                channel,
+                msg if msg else '',
+            ).encode(ENCODING) + \
+            b'\r\n'
+        )
+
+    # TODO: Respond with error once registered
+    def handle_nick(self, args):
+        logger.debug('handle_nick: {}'.format(args))
+        self.user = args
+
+    def handle_user(self):
+        logger.debug('handle_user: (no args)')
+        if self.user != '*' and self.password and self.setup():
+            self.reply('{} {} :Welcome to Malíček ({}), {}.'.format(
+                IRC.RPL_WELCOME.value,
+                self.user,
+                SERVER,
+                self.user,
+            ))
+        else:
+            self.reply('{} {} :Authentication failed, sorry.'.format(
+                IRC.ERR_PASSWDMISMATCH.value,
+                self.user,
+            ))
+            sel.unregister(self.socket)
+            self.socket.close()
+
+    def handle_pass(self, args):
+        logger.debug('handle_pass: (args hidden)')
+        self.password = args
+
+    # TODO: Leave all channels once done debugging
+    # TODO: Respond with ERROR, huh
+    def handle_quit(self):
+        logger.debug('handle_quit: (no args)')
+        sel.unregister(self.socket)
+        try:
+            self.socket.close()
+        except:
+            pass
+
+    def handle_ping(self, args):
+        logger.debug('handle_ping: (no args)')
+        self.reply('PONG {}'.format(args))
+
+    def handle_names(self, args):
+        logger.debug('handle_names: {}'.format(args))
+        pass
+
+    def handle_topic(self):
+        logger.debug('handle_topic: (no args)')
+        pass
+
+    def handle_list(self, args):
+        logger.debug('handle_list: {}'.format(args))
+        only = set()
+        if args:
+            for pattern in args.split(' ')[0].split(','):
+                pattern = re.escape(pattern)
+                pattern = pattern.replace('\\*', '.*')
+                only.add(re.compile('^{}$'.format(pattern)))
+        for room in self.rooms():
+            show = True
+            if only:
+                show = False
+                for pattern in only:
+                     if pattern.match(room['id']):
+                         show = True
+                         break
+            if room['id'] is None:
+                show = False
+            if not show:
+                continue
+            self.reply('{} {} #{} {} :{}'.format(
+                IRC.RPL_LIST.value,
+                self.user,
+                room['id'],
+                len(room['users']),
+                room['name'],
+            ))
+        self.reply('{} {} :End of LIST'.format(
+            IRC.RPL_LISTEND.value,
+            self.user,
+        ))
+
+    # TODO: Implement this
+    # Call update_users or something
+    def handle_who(self, args):
+        logger.debug('handle_who: {}'.format(args))
+        pass
+
+    # TODO: Implement this
+    # Call update_users or something
+    def handle_whois(self, args):
+        logger.debug('handle_whois: {}'.format(args))
+        pass
+
+    # TODO: Handle 0 properly
+    def handle_join(self, args):
+        logger.debug('handle_join: {}'.format(args))
+        if args == '0':
+            return
+        rooms = { x['id']: x for x in self.rooms() }
+        for chan in args.split(','):
+            res = self.get('rooms/{}'.format(chan[1:]))
+            if res.status_code != 200:
+                continue
+            for usr in res.json()['users']:
+                self.info(
+                    usr['name'],
+                    uid=usr['id'],
+                    link=usr['link'],
+                    sex=usr['sex'],
+                    age=usr['age'],
+                    oper=True if usr['admin'] else False,
+                )
+            self.do_join(self.user, chan)
+            self.reply('{} {} {} :{}'.format(
+                IRC.RPL_TOPIC.value,
+                self.user,
+                chan,
+                rooms[chan[1:]]['name'],
+            ))
+            self.reply('{} {} = {} :{}'.format(
+                IRC.RPL_NAMEREPLY.value,
+                self.user,
+                chan,
+                ' '.join(
+                    '{}{}'.format(
+                        ('@' if x['admin'] else ''),
+                        x['name'],
+                    ) for x in rooms[chan[1:]]['users']
+                )
+            ))
+            self.reply('{} {} {} :{}'.format(
+                IRC.RPL_ENDOFNAMES.value,
+                self.user,
+                chan,
+                'End of /NAMES list.',
+            ))
+            messages = res.json()['messages']
+            messages.reverse()
+            for msg in messages:
+                self.do_privmsg(
+                    '*',
+                    chan,
+                    '[{}] ({}) {}'.format(
+                        msg['time'] if msg['time'] else '??:??:??',
+                        msg['nick'] if msg['nick'] else '*',
+                        emoji(msg['message']),
+                    ),
+                )
+            self.channels[chan] = {
+                'activity': int(time.time()),
+            }
+            if messages:
+                self.channels[chan]['seen'] = messages[-1]
+
+    def handle_part(self, args):
+        logger.debug('handle_part: {}'.format(args))
+        for chan in args.split(' ')[0].split(','):
+            del self.channels[chan]
+            self.post(
+                'rooms/{}'.format(chan[1:]),
+                { 'action': 'leave' },
+            )
+            self.do_part(self.user, chan)
+
+    # TODO: Handle whispering
+    # TODO: Remember colors per room and use them
+    def handle_privmsg(self, args):
+        logger.debug('handle_privmsg: {}'.format(args))
+        chan, msg = args.split(' ', 1)
+        if not chan.startswith('#'):
+            pass
+        if len(msg) < 2:
+            pass
+        if chan not in self.channels:
+            pass
+        msg = msg[1:]
+        if msg.startswith('\x01') and msg.endswith('\x01'):
+            msg = msg.replace('\x01ACTION ', '*')
+            msg = msg.replace('\x01', '*')
+        self.post(
+            'rooms/{}'.format(chan[1:]),
+            {
+                'action': 'post',
+                'to': 0,
+                'message': msg,
+                'color': COLOR,
+            },
+        )
+        self.channels[chan]['activity'] = int(time.time())
+
+    # TODO: Implement this
+    def handle_notice(self, args):
+        logger.debug('handle_notice: {}'.format(args))
+        pass
+
+def emoji(msg):
+    msg = msg.replace('[:-)]', '🙂')
+    msg = msg.replace('[:->]', '😀')
+    msg = msg.replace('[:-D]', '😆')
+    msg = msg.replace('[;-D]', '🤣')
+    msg = msg.replace('[;-)]', '😉')
+    msg = msg.replace('[:-|]', '😐')
+    msg = msg.replace('[:-P]', '😛')
+    msg = msg.replace('[8-D]', '😂')
+    msg = msg.replace('[8-o]', '😲')
+    msg = msg.replace('[:-o]', '😮')
+    msg = msg.replace('[:-(]', '😟')
+    msg = msg.replace('[:-E]', '😡')
+    msg = msg.replace('[;-(]', '😢')
+    msg = msg.replace('[:-c]', '😩')
+    msg = msg.replace('[:-Q]', '🤮')
+    msg = msg.replace('[8-P]', '😜')
+    msg = msg.replace('[:-3]', '😊')
+    msg = msg.replace('[:-$]', '🤢')
+    msg = msg.replace('[O:-)]', '😇')
+    msg = msg.replace('[]:-)]', '😈')
+    msg = msg.replace('[Z]', '⚡')
+    msg = msg.replace('[?]', '❓')
+    msg = msg.replace('[!]', '❗')
+    msg = msg.replace('[R^]', '👍')
+    msg = msg.replace('[Rv]', '👎')
+    msg = msg.replace('[O=]', '💡')
+    msg = msg.replace('[@)->-]', '🌹')
+    msg = msg.replace('[@=]', '💣')
+    msg = msg.replace('[8=]', '💀')
+    msg = msg.replace('[$>]', '💗')
+    msg = msg.replace('B-)', '😎')
+    msg = msg.replace(':-[)', '😷')
+    msg = msg.replace('8-[)', '😷')
+    msg = msg.replace('(8:O)', '🦛')
+    msg = msg.replace('(8:o)', '🦛')
+    msg = msg.replace('(8:°)', '🦛')
+    msg = msg.replace('(ÍÍÍ)', '🍰')
+    return msg
+
+def accept(sock):
+    conn = sock.accept()[0]
+    conn.setblocking(False)
+    sel.register(
+        conn,
+        (selectors.EVENT_READ),
+        data=types.SimpleNamespace(buf=b'', client=Client(conn))
+    )
+
+def handle(key, mask):
+    sock = key.fileobj
+    data = key.data
+    if mask & selectors.EVENT_READ:
+        recv = sock.recv(BUFFER)
+        if recv:
+            data.buf += recv
+        else:
+            sel.unregister(sock)
+            sock.close()
+    while data.buf:
+        pos = data.buf.find(b'\r\n')
+        if pos != -1:
+            cmd = data.buf[0:pos]
+            data.buf = data.buf[pos + 2:]
+            data.client.handle(cmd)
+            continue
+        break
+
+def main():
+    logger.setLevel(logging.DEBUG)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(('0.0.0.0', 6667))
+    sock.listen()
+    sock.setblocking(False)
+    sel.register(sock, selectors.EVENT_READ, data=None)
+    while True:
+        events = sel.select(timeout=None)
+        for k, m in events:
+            if k.data is None:
+                accept(k.fileobj)
+            else:
+                handle(k, m)
+
+if __name__ == '__main__':
+    main()
