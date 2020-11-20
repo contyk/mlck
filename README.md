@@ -318,7 +318,7 @@ Nothing besides the standard library is required.
 
 mlck connects to a Malíček endpoint, which needs to be deployed first.
 
-Only all is set up, just run it:
+Once everything is set up, just run it:
 
 `./mlck`
 
