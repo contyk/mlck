@@ -90,6 +90,13 @@ class Client:
         self.nicks = dict()
         # Our auto thread for fetching messages and other updates
         self.auto = threading.Thread(target=self.periodic, daemon=True)
+        # Locks for commonly accessed shared resources
+        self.lock = {
+            x: threading.Lock() for x in (
+                'channels',
+                'nicks',
+            )
+        }
 
     def __del__(self):
         """Destroys the session instance.
@@ -192,8 +199,8 @@ class Client:
     # TODO: Handle OPER MODEs
     def periodic(self):
         while self.registered():
-            channels = self.channels
-            for chan in channels.keys():
+            self.lock['channels'].acquire()
+            for chan in self.channels.keys():
                 logger.debug('Running a periodic refresh for {}.'.format(chan))
                 res = self.get('rooms/{}'.format(chan[1:]))
                 messages = list()
@@ -241,6 +248,7 @@ class Client:
                         chan,
                         emoji(msg['message']) if not msg['private'] else '\x02[pst!] {}\x0f'.format(emoji(msg['message']))
                     )
+            self.lock['channels'].release()
             time.sleep(REFRESH)
 
     def keepalive(self, chan):
@@ -258,30 +266,33 @@ class Client:
         )
 
     def info(self, nick, uid=None, link=None, sex=None, age=None, oper=None):
-        if nick not in self.nicks:
-            self.nicks[nick] = dict()
-        if uid:
-            self.nicks[nick]['uid'] = uid
-        if link:
-            self.nicks[nick]['link'] = link
-        if sex:
-            self.nicks[nick]['sex'] = sex
-        if age:
-            self.nicks[nick]['age'] = age
-        if oper:
-            self.nicks[nick]['oper'] = oper
-        return self.nicks[nick]
+        with self.lock['nicks']:
+            if nick not in self.nicks:
+                self.nicks[nick] = dict()
+            if uid:
+                self.nicks[nick]['uid'] = uid
+            if link:
+                self.nicks[nick]['link'] = link
+            if sex:
+                self.nicks[nick]['sex'] = sex
+            if age:
+                self.nicks[nick]['age'] = age
+            if oper:
+                self.nicks[nick]['oper'] = oper
+            return self.nicks[nick]
 
     def registered(self):
         if self.session:
             return True
         return False
 
+    # TODO: Needs a timeout
     def get(self, handle):
         return self.session.get(
             '{}/{}'.format(self.endpoint, handle)
         )
 
+    # TODO: Needs a timeout
     def post(self, handle, data=None):
         return self.session.post(
             '{}/{}'.format(self.endpoint, handle),
@@ -502,16 +513,20 @@ class Client:
                         emoji(msg['message']),
                     ),
                 )
+            self.lock['channels'].acquire()
             self.channels[chan] = {
                 'activity': int(time.time()),
             }
             if messages:
                 self.channels[chan]['seen'] = messages[-1]
+            self.lock['channels'].release()
 
     def handle_part(self, args):
         logger.debug('handle_part: {}'.format(args))
         for chan in args.split(' ')[0].split(','):
+            self.lock['channels'].acquire()
             del self.channels[chan]
+            self.lock['channels'].release()
             self.post(
                 'rooms/{}'.format(chan[1:]),
                 { 'action': 'leave' },
@@ -527,6 +542,7 @@ class Client:
             pass
         if len(msg) < 2:
             pass
+        self.lock['channels'].acquire()
         if chan not in self.channels:
             pass
         msg = msg[1:]
@@ -543,6 +559,7 @@ class Client:
             },
         )
         self.channels[chan]['activity'] = int(time.time())
+        self.lock['channels'].release()
 
     # TODO: Implement this
     def handle_notice(self, args):
