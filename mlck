@@ -823,8 +823,8 @@ class Client:
         args = args or ''
         rooms = self.rooms()
         args = args.split(' ')
-        if args[0] == '0':
-            args[0] = ''
+        if args[0] in ('', '0'):
+            args[0] = '*'
         mask = re.escape(args[0])
         mask = mask.replace('\\#', '#')
         mask = mask.replace('\\?', '.')
