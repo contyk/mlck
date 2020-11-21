@@ -14,15 +14,19 @@ import threading
 import time
 import types
 
-# Server name
+# Server name (config)
 SERVER = 'localhost'
-# Refresh in seconds for periodic
+# Version
+VERSION = '0.1.0'
+# Startup timestamp
+STARTED = time.strftime('%a %b %d %Y at %H:%M:%S UTC', time.gmtime())
+# Refresh in seconds for periodic (config)
 REFRESH = 3
-# IRC messages are pretty short and should fit with all the commands
+# IRC messages are pretty short and should fit with all the commands (config)
 BUFFER = 1024
-# Use UTF-8 for all network communication
+# Use UTF-8 for all network communication (config)
 ENCODING = 'utf-8'
-# FIXME: Get from settings per channel
+# FIXME: Get from settings per channel (dynamic)
 COLOR = '#424242'
 
 # Should be configurable
@@ -647,11 +651,29 @@ class Client:
         """
         logger.debug('handle_user: (no args)')
         if self.user != '*' and self.password and self.setup():
-            self.reply('{} {} :Welcome to Malíček ({}), {}.'.format(
+            self.reply('{} {} :Welcome to Malíček.'.format(
                 IRC.RPL_WELCOME.value,
                 self.user,
                 SERVER,
                 self.user,
+            ))
+            self.reply('{} {} :Your host is {}, running version mlck-{}.'.format(
+                IRC.RPL_YOURHOST.value,
+                self.user,
+                SERVER,
+                VERSION,
+            ))
+            self.reply('{} {} :This server was created on {}'.format(
+                IRC.RPL_CREATED.value,
+                self.users,
+                STARTED,
+            ))
+            # TODO: Advertise modes once we support them
+            self.reply('{} {} :{} mlck-{}'.format(
+                IRC.RPL_MYINFO.value,
+                self.user,
+                SERVER,
+                VERSION,
             ))
         else:
             self.error(IRC.ERR_PASSWDMISMATCH)
