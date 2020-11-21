@@ -156,6 +156,8 @@ class Client:
         self.session = None
         return False
 
+    # TODO: Check if the message begins with an originator
+    #       and if so, strip it.
     def handle(self, msg):
         """Consume messages from the socket.
 
@@ -665,7 +667,7 @@ class Client:
             ))
             self.reply('{} {} :This server was created on {}'.format(
                 IRC.RPL_CREATED.value,
-                self.users,
+                self.user,
                 STARTED,
             ))
             # TODO: Advertise modes once we support them
@@ -722,9 +724,8 @@ class Client:
         :param args: <server> [<server>]
         """
         logger.debug('handle_ping: {}'.format(args))
-        self.reply('PONG {} {}'.format(
+        self.reply('PONG {}'.format(
             SERVER,
-            args.split(' ')[-1],
         ))
 
     def handle_pong(self, args):
