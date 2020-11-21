@@ -441,7 +441,6 @@ class Client:
 
     # TODO: Needs a timeout
     def post(self, handle, data=None):
-        return self.session.post(
         """Fetch Malíček handles using POST
 
         A simple wrapper for fetching backend handles.  Returns raw request
@@ -455,6 +454,7 @@ class Client:
         :param data: Data to send, if any
         :returns: Request response object
         """
+        return self.session.post(
             '{}/{}'.format(self.endpoint, handle),
             json=data,
         )
@@ -763,6 +763,8 @@ class Client:
         if args:
             for pattern in args.split(' ')[0].split(','):
                 pattern = re.escape(pattern)
+                pattern = pattern.replace('\\#', '#')
+                pattern = pattern.replace('\\?', '.')
                 pattern = pattern.replace('\\*', '.*')
                 only.add(re.compile('^{}$'.format(pattern)))
         for room in self.rooms():
@@ -789,16 +791,96 @@ class Client:
             self.user,
         ))
 
-    # TODO: Implement this
+    # TODO: Age requires a Malicek update
     def handle_who(self, args):
         """Handle WHO commands.
 
-        Not implemented.
+        RFC 2812 is rather vague and unclear on this topic, however, WHO
+        commands require one or two arguments, the first of which is a mask,
+        the other is optionally the letter 'o'.
+
+        The mask can be both a user mask or a channel mask and may include
+        wildcards.
+
+        We support this, except that if the mask begins with a '#', channel
+        is assumed, user otherwise.  To search for channels beginning with a
+        wildcard, '#*foo' must be requested.
+
+        If 'o' is requested, the list returns only operators.
+
+        For channels, we query every matching channel.  For user queries we
+        aggregate the results and return them for channel '*', omitting
+        operator flags.  This seems to be the common practice.
+
+        The "real name" part is replaced by user details for convenience.
+
+        User mask doesn't match against our virtual hostnames or servers,
+        only IDs, nicknames and details.
 
         :param args: [<mask> [o]]
         """
         logger.debug('handle_who: {}'.format(args))
-        self.error(IRC.ERR_UNKNOWNCOMMAND)
+        args = args or ''
+        rooms = self.rooms()
+        args = args.split(' ')
+        if args[0] == '0':
+            args[0] = ''
+        mask = re.escape(args[0])
+        mask = mask.replace('\\#', '#')
+        mask = mask.replace('\\?', '.')
+        mask = mask.replace('\\*', '.*')
+        mask = re.compile('^{}$'.format(mask))
+        if args[0].startswith('#'):
+            for room in rooms:
+                if not mask.match('#{}'.format(room['id'])):
+                    continue
+                for nick in room['users']:
+                    if len(args) > 1 and args[1] == 'o' and not nick['admin']:
+                        continue
+                    self.reply('{} {} #{} {} alik.cz {} {} H{} :0 {}'.format(
+                        IRC.RPL_WHOREPLY.value,
+                        self.user,
+                        room['id'],
+                        nick['id'],
+                        SERVER,
+                        nick['name'],
+                        '@' if nick['admin'] else '',
+                        '{}, https://alik.cz/u/{}'.format(
+                            nick['sex'],
+                            nick['id'],
+                        ),
+                    ))
+        else:
+            nicks = dict()
+            for room in rooms:
+                for nick in room['users']:
+                    if len(args) > 1 and args[1] == 'o' and not nick['admin']:
+                        continue
+                    nicks[nick['name']] = {
+                        'link': nick['id'],
+                        'sex': nick['sex'],
+                    }
+            for nick, data in sorted(nicks.items()):
+                if not mask.match(nick) and \
+                    not mask.match(data['link']) and \
+                    not mask.match(data['sex']):
+                    continue
+                self.reply('{} {} * {} alik.cz {} {} H :0 {}'.format(
+                    IRC.RPL_WHOREPLY.value,
+                    self.user,
+                    data['link'],
+                    SERVER,
+                    nick,
+                    '{}, https://alik.cz/u/{}'.format(
+                        data['sex'],
+                        data['link'],
+                    ),
+                ))
+        self.reply('{} {} {} :End of /WHO list.'.format(
+            IRC.RPL_ENDOFWHO.value,
+            self.user,
+            args[0],
+        ))
 
     # TODO: Implement this
     def handle_whois(self, args):
