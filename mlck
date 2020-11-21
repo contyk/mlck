@@ -778,6 +778,9 @@ class Client:
         The output includes the number of users in that channel,
         as well as its actual name.
 
+        Rooms the user cannot join are not listed as the have no
+        known ID.
+
         :param args: [<channel>[,<channel>]* [<target>]]
         """
         logger.debug('handle_list: {}'.format(args))
@@ -839,6 +842,9 @@ class Client:
         User mask doesn't match against our virtual hostnames or servers,
         only IDs, nicknames and details.
 
+        Channel queries omit channels the user cannot join as they have
+        no visible room IDs.
+
         :param args: [<mask> [o]]
         """
         logger.debug('handle_who: {}'.format(args))
@@ -854,6 +860,8 @@ class Client:
         mask = re.compile('^{}$'.format(mask))
         if args[0].startswith('#'):
             for room in rooms:
+                if not room['id']:
+                    continue
                 if not mask.match('#{}'.format(room['id'])):
                     continue
                 for nick in room['users']:
