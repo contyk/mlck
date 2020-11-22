@@ -39,9 +39,13 @@ REFRESH = 3
 BUFFER = 1024
 # Use UTF-8 for all network communication (config)
 ENCODING = 'utf-8'
+# User agent for requests
+AGENT = 'mlck/{}'.format(VERSION)
 
 # Should be configurable
 ENDPOINT = 'https://alik.contyk.dev/api'
+# Timeout for requests
+TIMEOUT = 1
 
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
@@ -474,6 +478,8 @@ class Client:
             for chan in self.channels:
                 logger.debug('periodic: %s', chan)
                 res = self.get('rooms/{}'.format(chan[1:]))
+                if not res:
+                    continue
                 messages = list()
                 for msg in res.json()['messages']:
                     if chan not in self.channels:
@@ -484,9 +490,10 @@ class Client:
                 messages.reverse()
                 if messages:
                     self.channels[chan]['seen'] = messages[-1]
-                if int(time.time()) - self.channels[chan]['activity'] > 15 * 60:
-                    self.channels[chan]['activity'] = int(time.time())
-                    self.keepalive(chan)
+                ctime = int(time.time())
+                if ctime - self.channels[chan]['activity'] > 15 * 60:
+                    if self.keepalive(chan):
+                        self.channels[chan]['activity'] = ctime
                 for usr in res.json()['users']:
                     self.info(
                         usr['name'],
@@ -537,17 +544,15 @@ class Client:
         msg = '[ malíček/keepalive {} ]'.format(
             str.lower(''.join(random.choice(string.hexdigits) for i in range(16)))
         )
-        self.lock['channels'].acquire()
-        self.post(
+        return self.post(
             'rooms/{}'.format(chan[1:]),
-            {
+            data={
                 'action': 'post',
                 'to': -1,
                 'message': msg,
                 'color': self.channels[chan]['color'],
-            }
+            },
         )
-        self.lock['channels'].release()
 
     def info(self, nick, uid=None, link=None, sex=None, age=None, oper=None):
         """Handle user information records
@@ -633,8 +638,7 @@ class Client:
             return True
         return False
 
-    # TODO: Needs a timeout
-    def get(self, resource):
+    def get(self, resource, params=None):
         """Fetch Malíček resources using GET.
 
         A simple wrapper for fetching backend resources.  Returns raw request
@@ -644,12 +648,20 @@ class Client:
         :param resource: API resource, appended to "ENDPOINT/"
         :returns: Request response object
         """
-        return self.session.get(
-            '{}/{}'.format(self.endpoint, resource)
-        )
+        try:
+            return self.session.get(
+                '{}/{}'.format(self.endpoint, resource),
+                timeout=TIMEOUT,
+                params=params,
+                headers={
+                    'User-Agent': AGENT,
+                },
+            )
+        except requests.exceptions.Timeout:
+            logger.warning('get: timeout while processing %s, params: %s', resource, params)
+            return None
 
-    # TODO: Needs a timeout
-    def post(self, resource, data=None):
+    def post(self, resource, params=None, data=None):
         """Fetch Malíček resources using POST
 
         A simple wrapper for fetching backend resources.  Returns raw request
@@ -663,10 +675,19 @@ class Client:
         :param data: Data to send, if any
         :returns: Request response object
         """
-        return self.session.post(
-            '{}/{}'.format(self.endpoint, resource),
-            json=data,
-        )
+        try:
+            return self.session.post(
+                '{}/{}'.format(self.endpoint, resource),
+                timeout=TIMEOUT,
+                params=params,
+                json=data,
+                headers={
+                    'User-Agent': AGENT,
+                },
+            )
+        except requests.exceptions.Timeout:
+            logger.warning('post: timeout while processing %s, params: %s', resource, params)
+            return None
 
     def login(self):
         """Initiate the Malíček session.
@@ -682,13 +703,13 @@ class Client:
         logger.debug('login: %s', self.user)
         r = self.post(
             'login',
-            {
+            data={
                 'user': self.user,
                 'pass': self.password
             }
-        ).status_code
+        )
         self.password = None
-        return bool(r == 200)
+        return r and r.status_code == requests.codes.ok
 
     def logout(self):
         """Terminate the Malíček session.
@@ -707,7 +728,8 @@ class Client:
         :returns: Request response
         """
         logger.debug('Fetching rooms.')
-        return self.get('rooms').json()
+        rooms = self.get('rooms')
+        return rooms.json() if rooms else None
 
     def do_privmsg(self, sender, target, message):
         """Send the PRIVMSG command.
@@ -932,18 +954,40 @@ class Client:
         if args == '0':
             self.lock['channels'].acquire()
             for chan in self.channels:
-                del self.channels[chan]
-                self.post(
-                    'rooms/{}'.format(chan[1:]),
-                    { 'action': 'leave' }
-                )
-                self.do_part(self.user, chan)
+                if self.post(
+                        'rooms/{}'.format(chan[1:]),
+                        data={
+                            'action': 'leave'
+                        },
+                    ):
+                    del self.channels[chan]
+                    self.do_part(self.user, chan)
+                else:
+                    self.error(
+                        IRC.ERR_UNAVAILRESOURCE,
+                        '{}: Resource is temporarily unavailable.'.format(chan),
+                    )
             self.lock['channels'].release()
+            return
         for chan in args.split(' ')[0].split(','):
             res = self.get('rooms/{}'.format(chan[1:]))
+            if not res:
+                self.error(
+                    IRC.ERR_UNAVAILRESOURCE,
+                    '{}: Resource is temporarily unavailable.'.format(chan),
+                )
+                continue
             if res.status_code != 200:
                 continue
-            settings = self.get('rooms/{}?query=settings'.format(chan[1:]))
+            settings = self.get(
+                'rooms/{}'.format(chan[1:]),
+                params={
+                    'query': 'settings',
+            })
+            if not settings:
+                settings = {
+                    'color': '#000000',
+                }
             for usr in res.json()['users']:
                 self.info(
                     usr['name'],
@@ -1016,13 +1060,20 @@ class Client:
         logger.debug('handle_part: %s', args)
         for chan in args.split(' ')[0].split(','):
             self.lock['channels'].acquire()
-            del self.channels[chan]
+            if self.post(
+                    'rooms/{}'.format(chan[1:]),
+                    data={
+                        'action': 'leave'
+                    },
+                ):
+                del self.channels[chan]
+                self.do_part(self.user, chan)
+            else:
+                self.error(
+                    IRC.ERR_UNAVAILRESOURCE,
+                    '{}: Resource is temporarily unavailable.'.format(chan),
+                )
             self.lock['channels'].release()
-            self.post(
-                'rooms/{}'.format(chan[1:]),
-                { 'action': 'leave' },
-            )
-            self.do_part(self.user, chan)
 
     # TODO: Implement this
     def handle_topic(self, args):
@@ -1068,7 +1119,14 @@ class Client:
                 pattern = pattern.replace('\\?', '.')
                 pattern = pattern.replace('\\*', '.*')
                 only.add(re.compile('^{}$'.format(pattern)))
-        for room in self.rooms():
+        rooms = self.rooms()
+        if not rooms:
+            self.error(
+                IRC.ERR_UNAVAILRESOURCE,
+                'Resource is temporarily unavailable.',
+            )
+            return
+        for room in rooms:
             show = True
             if only:
                 show = False
@@ -1131,16 +1189,24 @@ class Client:
         if msg.startswith('\x01') and msg.endswith('\x01'):
             msg = msg.replace('\x01ACTION ', '*')
             msg = msg.replace('\x01', '*')
-        self.post(
-            'rooms/{}'.format(chan[1:]),
-            {
-                'action': 'post',
-                'to': 0,
-                'message': msg,
-                'color': self.channels[chan]['color'],
-            },
-        )
-        self.channels[chan]['activity'] = int(time.time())
+        if self.post(
+                'rooms/{}'.format(chan[1:]),
+                data={
+                    'action': 'post',
+                    'to': 0,
+                    'message': msg,
+                    'color': self.channels[chan]['color'],
+                },
+            ):
+            self.channels[chan]['activity'] = int(time.time())
+        else:
+            self.error(
+                IRC.ERR_UNAVAILRESOURCE,
+                'Message ({}, {}) not send; resource temporarily unavailable.'.format(
+                    chan,
+                    msg,
+                ),
+            )
         self.lock['channels'].release()
 
     def handle_notice(self, args):
@@ -1224,6 +1290,12 @@ class Client:
         logger.debug('handle_who: %s', args)
         args = args or ''
         rooms = self.rooms()
+        if not rooms:
+            self.error(
+                IRC.ERR_UNAVAILRESOURCE,
+                'Resource is temporarily unavailable.',
+            )
+            return
         args = args.split(' ')
         if args[0] in ('', '0'):
             args[0] = '*'
