@@ -527,7 +527,7 @@ class Client:
         :param chan: Channel name
         """
         msg = '[ malíček/keepalive {} ]'.format(
-            ''.join(random.choice(string.hexdigits) for i in range(16))
+            str.lower(''.join(random.choice(string.hexdigits) for i in range(16)))
         )
         self.lock['channels'].acquire()
         self.post(
