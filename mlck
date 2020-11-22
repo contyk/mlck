@@ -32,7 +32,7 @@ COLOR = '#424242'
 # Should be configurable
 ENDPOINT = 'https://alik.contyk.dev/api'
 
-logging.basicConfig(format='%(levelname)s : %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(scatime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 sel = selectors.DefaultSelector()
@@ -111,6 +111,7 @@ class Client:
         self.session = None
         self.user = '*'
         self.password = None
+        self.userstring = None
         # Dict of channels we're in
         # Values are another dict, with `seen` and `activity` as keys
         self.channels = dict()
@@ -171,8 +172,8 @@ class Client:
 
         :param msg: Byte sequence representing message input
         """
-        logger.debug('Handling input: {}'.format(msg))
         msg = msg.decode(ENCODING)
+        logger.debug('Handling input: {}'.format(msg))
         pos = msg.find(' ')
         if pos == -1:
             cmd = msg
@@ -196,7 +197,7 @@ class Client:
         if cmd == 'NICK':
             self.handle_nick(args)
         elif cmd == 'USER':
-            self.handle_user()
+            self.handle_user(args)
         elif cmd == 'PASS':
             self.handle_pass(args)
         elif cmd == 'QUIT':
@@ -417,6 +418,44 @@ class Client:
             if oper:
                 self.nicks[nick]['oper'] = oper
             return self.nicks[nick]
+
+    def register(self):
+        """Register a connection.
+
+        Attempt to register the connection if all required data has been
+        provided.  Called from handle_nick() and handle_user().
+        """
+        if self.user == '*' or not self.password or not self.userstring:
+            return
+        if self.setup():
+            self.reply('{} {} :Welcome to Malíček.'.format(
+                IRC.RPL_WELCOME.value,
+                self.user,
+                SERVER,
+                self.user,
+            ))
+            self.reply('{} {} :Your host is {}, running version mlck-{}.'.format(
+                IRC.RPL_YOURHOST.value,
+                self.user,
+                SERVER,
+                VERSION,
+            ))
+            self.reply('{} {} :This server was created on {}'.format(
+                IRC.RPL_CREATED.value,
+                self.user,
+                STARTED,
+            ))
+            # TODO: Advertise modes once we support them
+            self.reply('{} {} :{} mlck-{}'.format(
+                IRC.RPL_MYINFO.value,
+                self.user,
+                SERVER,
+                VERSION,
+            ))
+        else:
+            self.error(IRC.ERR_PASSWDMISMATCH)
+            sel.unregister(self.socket)
+            self.socket.close()
 
     def registered(self):
         """Check if our connection has been registered.
@@ -640,47 +679,29 @@ class Client:
         Set the nickname and use it Alík's username.  It doesn't make
         sense to change it later as it's your immutable remote identifier.
 
+        Attempts to register the connection.
+
         :param args: <nickname>
         """
         logger.debug('handle_nick: {}'.format(args))
         self.user = args
+        self.register()
 
-    def handle_user(self):
+    def handle_user(self, args):
         """Handle USER commands.
 
         Finishes the registration.  We don't actually care about the
         arguments as all, so we ignore them all.  No one will see you.
+
+        The arguments are effectively ignored but stored.
+
+        Attempts to register the connection.
+
+        :param args: <USER string>
         """
         logger.debug('handle_user: (no args)')
-        if self.user != '*' and self.password and self.setup():
-            self.reply('{} {} :Welcome to Malíček.'.format(
-                IRC.RPL_WELCOME.value,
-                self.user,
-                SERVER,
-                self.user,
-            ))
-            self.reply('{} {} :Your host is {}, running version mlck-{}.'.format(
-                IRC.RPL_YOURHOST.value,
-                self.user,
-                SERVER,
-                VERSION,
-            ))
-            self.reply('{} {} :This server was created on {}'.format(
-                IRC.RPL_CREATED.value,
-                self.user,
-                STARTED,
-            ))
-            # TODO: Advertise modes once we support them
-            self.reply('{} {} :{} mlck-{}'.format(
-                IRC.RPL_MYINFO.value,
-                self.user,
-                SERVER,
-                VERSION,
-            ))
-        else:
-            self.error(IRC.ERR_PASSWDMISMATCH)
-            sel.unregister(self.socket)
-            self.socket.close()
+        self.userstring = args
+        self.register()
 
     def handle_pass(self, args):
         """Handle PASS commands.
