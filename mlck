@@ -26,13 +26,11 @@ REFRESH = 3
 BUFFER = 1024
 # Use UTF-8 for all network communication (config)
 ENCODING = 'utf-8'
-# FIXME: Get from settings per channel (dynamic)
-COLOR = '#424242'
 
 # Should be configurable
 ENDPOINT = 'https://alik.contyk.dev/api'
 
-logging.basicConfig(format='%(scatime)s : %(levelname)s : %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 sel = selectors.DefaultSelector()
@@ -531,15 +529,17 @@ class Client:
         msg = '[ malíček/keepalive {} ]'.format(
             ''.join(random.choice(string.hexdigits) for i in range(16))
         )
+        self.lock['channels'].acquire()
         self.post(
             'rooms/{}'.format(chan[1:]),
             {
                 'action': 'post',
                 'to': -1,
                 'message': msg,
-                'color': COLOR,
+                'color': self.channels[chan]['color'],
             }
         )
+        self.lock['channels'].release()
 
     def info(self, nick, uid=None, link=None, sex=None, age=None, oper=None):
         """Handle user information records
@@ -937,6 +937,7 @@ class Client:
             res = self.get('rooms/{}'.format(chan[1:]))
             if res.status_code != 200:
                 continue
+            settings = self.get('rooms/{}?query=settings'.format(chan[1:]))
             for usr in res.json()['users']:
                 self.info(
                     usr['name'],
@@ -988,6 +989,7 @@ class Client:
             self.lock['channels'].acquire()
             self.channels[chan] = {
                 'activity': int(time.time()),
+                'color': settings.json()['color'],
             }
             if messages:
                 self.channels[chan]['seen'] = messages[-1]
@@ -1129,7 +1131,7 @@ class Client:
                 'action': 'post',
                 'to': 0,
                 'message': msg,
-                'color': COLOR,
+                'color': self.channels[chan]['color'],
             },
         )
         self.channels[chan]['activity'] = int(time.time())
