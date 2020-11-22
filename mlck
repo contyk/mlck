@@ -965,7 +965,7 @@ class Client:
                 else:
                     self.error(
                         IRC.ERR_UNAVAILRESOURCE,
-                        '{}: Resource is temporarily unavailable.'.format(chan),
+                        'Cannot leave {}, resource is temporarily unavailable.'.format(chan),
                     )
             self.lock['channels'].release()
             return
@@ -974,7 +974,7 @@ class Client:
             if not res:
                 self.error(
                     IRC.ERR_UNAVAILRESOURCE,
-                    '{}: Resource is temporarily unavailable.'.format(chan),
+                    'Cannot join {}, resource is temporarily unavailable.'.format(chan),
                 )
                 continue
             if res.status_code != 200:
@@ -1071,7 +1071,7 @@ class Client:
             else:
                 self.error(
                     IRC.ERR_UNAVAILRESOURCE,
-                    '{}: Resource is temporarily unavailable.'.format(chan),
+                    'Cannot leave {}, resource is temporarily unavailable.'.format(chan),
                 )
             self.lock['channels'].release()
 
@@ -1123,7 +1123,7 @@ class Client:
         if not rooms:
             self.error(
                 IRC.ERR_UNAVAILRESOURCE,
-                'Resource is temporarily unavailable.',
+                'Cannot process rooms, resource is temporarily unavailable.',
             )
             return
         for room in rooms:
@@ -1293,7 +1293,7 @@ class Client:
         if not rooms:
             self.error(
                 IRC.ERR_UNAVAILRESOURCE,
-                'Resource is temporarily unavailable.',
+                'Cannot list users, resource is temporarily unavailable.',
             )
             return
         args = args.split(' ')
