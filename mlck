@@ -1,4 +1,16 @@
 #!/usr/bin/python3
+"""A virtual IRC server and a Malíček client.
+
+This module provides an IRC interface for Malíček.  The connected
+user is the only real user on the server, while everyone else is
+virtual, as reported by the backend.
+
+Periodically fetches new messages for joined channels.  Simulates
+actions from other users.
+
+Strives for full RFC 2812 compatibility.
+"""
+
 import argparse
 import configparser
 import enum
@@ -6,13 +18,14 @@ import logging
 import os
 import random
 import re
-import requests
 import selectors
 import socket
 import string
 import threading
 import time
 import types
+
+import requests
 
 # Server name (config)
 SERVER = 'localhost'
@@ -285,7 +298,7 @@ class Client:
         if self.registered() and cmd in ('NICK', 'USER', 'PASS'):
             self.error(IRC.ERR_ALREADYREGISTERED)
             return
-        elif not self.registered() and cmd not in ('NICK', 'USER', 'PASS'):
+        if not self.registered() and cmd not in ('NICK', 'USER', 'PASS'):
             self.error(IRC.ERR_NOTREGISTERED)
             return
         if cmd == 'PASS':
@@ -331,7 +344,7 @@ class Client:
         elif cmd == 'STATS':
             self.handle_stats(args)
         elif cmd == 'LINKS':
-            self.handle_link(args)
+            self.handle_links(args)
         elif cmd == 'TIME':
             cmd.handle_time(args)
         elif cmd == 'CONNECT':
@@ -458,7 +471,7 @@ class Client:
         """
         while self.registered():
             self.lock['channels'].acquire()
-            for chan in self.channels.keys():
+            for chan in self.channels:
                 logger.debug('periodic: %s', chan)
                 res = self.get('rooms/{}'.format(chan[1:]))
                 messages = list()
@@ -481,7 +494,7 @@ class Client:
                         link=usr['link'],
                         sex=usr['sex'],
                         age=usr['age'],
-                        oper=True if usr['admin'] else False,
+                        oper=bool(usr['admin']),
                     )
                 for msg in messages:
                     if msg['nick'] == self.user:
@@ -584,8 +597,6 @@ class Client:
             self.reply('{} {} :Welcome to Malíček.'.format(
                 IRC.RPL_WELCOME.value,
                 self.user,
-                SERVER,
-                self.user,
             ))
             self.reply('{} {} :Your host is {}, running version mlck-{}.'.format(
                 IRC.RPL_YOURHOST.value,
@@ -623,37 +634,37 @@ class Client:
         return False
 
     # TODO: Needs a timeout
-    def get(self, handle):
-        """Fetch Malíček handles using GET.
+    def get(self, resource):
+        """Fetch Malíček resources using GET.
 
-        A simple wrapper for fetching backend handles.  Returns raw request
+        A simple wrapper for fetching backend resources.  Returns raw request
         response objects.  Callers may check the status code or extract the data
         using the json() method.
 
-        :param handle: API handle, appended to "ENDPOINT/"
+        :param resource: API resource, appended to "ENDPOINT/"
         :returns: Request response object
         """
         return self.session.get(
-            '{}/{}'.format(self.endpoint, handle)
+            '{}/{}'.format(self.endpoint, resource)
         )
 
     # TODO: Needs a timeout
-    def post(self, handle, data=None):
-        """Fetch Malíček handles using POST
+    def post(self, resource, data=None):
+        """Fetch Malíček resources using POST
 
-        A simple wrapper for fetching backend handles.  Returns raw request
+        A simple wrapper for fetching backend resources.  Returns raw request
         response objects.  Callers may check the status code or extract the data
         using the json() method.
 
         Optionally, a data structure can be passed representing the data to
         send.
 
-        :param handle: API handle, appended to "ENDPOINT/"
+        :param resource: API resource, appended to "ENDPOINT/"
         :param data: Data to send, if any
         :returns: Request response object
         """
         return self.session.post(
-            '{}/{}'.format(self.endpoint, handle),
+            '{}/{}'.format(self.endpoint, resource),
             json=data,
         )
 
@@ -677,7 +688,7 @@ class Client:
             }
         ).status_code
         self.password = None
-        return True if r == 200 else False
+        return bool(r == 200)
 
     def logout(self):
         """Terminate the Malíček session.
@@ -873,7 +884,7 @@ class Client:
     def handle_mode(self, args):
         pass
 
-    def handle_server(self, args):
+    def handle_service(self, args):
         pass
 
     # TODO: Leave all channels once done debugging
@@ -920,7 +931,7 @@ class Client:
             return
         if args == '0':
             self.lock['channels'].acquire()
-            for chan in channels:
+            for chan in self.channels:
                 del self.channels[chan]
                 self.post(
                     'rooms/{}'.format(chan[1:]),
@@ -940,7 +951,7 @@ class Client:
                     link=usr['link'],
                     sex=usr['sex'],
                     age=usr['age'],
-                    oper=True if usr['admin'] else False,
+                    oper=bool(usr['admin']),
                 )
             self.do_join(self.user, chan)
             self.reply('{} {} {} :{}'.format(
@@ -1062,9 +1073,9 @@ class Client:
             if only:
                 show = False
                 for pattern in only:
-                     if pattern.match(room['id']):
-                         show = True
-                         break
+                    if pattern.match(room['id']):
+                        show = True
+                        break
             if room['id'] is None:
                 show = False
             if not show:
@@ -1155,9 +1166,6 @@ class Client:
     def handle_stats(self, args):
         pass
 
-    def handle_stats(self, args):
-        pass
-
     def handle_links(self, args):
         pass
 
@@ -1226,9 +1234,7 @@ class Client:
         mask = re.compile('^{}$'.format(mask))
         if args[0].startswith('#'):
             for room in rooms:
-                if not room['id']:
-                    continue
-                if not mask.match('#{}'.format(room['id'])):
+                if not room['id'] or not mask.match('#{}'.format(room['id'])):
                     continue
                 for nick in room['users']:
                     if len(args) > 1 and args[1] == 'o' and not nick['admin']:
@@ -1329,7 +1335,6 @@ class Client:
         :param args: <server> [<server>]
         """
         logger.debug('handle_pong: %s', args)
-        return
 
     def handle_error(self, args):
         """Handle ERROR commands.
