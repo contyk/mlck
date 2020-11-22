@@ -271,7 +271,7 @@ class Client:
         :param msg: Byte sequence representing message input
         """
         msg = msg.decode(ENCODING)
-        logger.debug('Handling input: {}'.format(msg))
+        logger.debug('Handling input: %s', msg)
         pos = msg.find(' ')
         if pos == -1:
             cmd = msg
@@ -281,11 +281,7 @@ class Client:
             args = msg[pos + 1:]
         if not cmd:
             return
-        if not args and cmd in ('NICK', 'USER', 'PASS', 'PART', 'TOPIC',
-                'NAMES', 'PRIVMSG', 'NOTICE'):
-            logger.debug('Received {} with not enough parameters.'.format(cmd))
-            self.error(IRC.ERR_NEEDMOREPARAMS)
-            return
+        cmd = str.upper(cmd)
         if self.registered() and cmd in ('NICK', 'USER', 'PASS'):
             self.error(IRC.ERR_ALREADYREGISTERED)
             return
@@ -384,9 +380,7 @@ class Client:
             self.handle_ison(args)
         else:
             self.error(IRC.ERR_UNKNOWNCOMMAND)
-            logger.warning('Unknown command: {}'.format(cmd))
-            logger.warning('Unknown arguments: {}'.format(args))
-            return
+            logger.warning('Unknown command: %s, args: %s', cmd, args)
 
     def reply(self, msg):
         """Send a standard reply in response to a command.
@@ -402,7 +396,7 @@ class Client:
 
         :param msg: The message to send
         """
-        logger.debug('Responding with {}'.format(msg))
+        logger.debug('Responding with %s', msg)
         self.socket.sendall(
             ':{} '.format(SERVER).encode(ENCODING) + \
             msg.encode(ENCODING) + \
@@ -423,7 +417,7 @@ class Client:
         :param err: The error code, an enum of the IRC class
         :param response: Optional error message
         """
-        logger.debug('Responding with error: {}'.format(err))
+        logger.debug('Responding with error: %s', err)
         if err == IRC.ERR_NEEDMOREPARAMS:
             response = response or 'Not enough parameters given.'
         elif err == IRC.ERR_UNKNOWNCOMMAND:
@@ -465,7 +459,7 @@ class Client:
         while self.registered():
             self.lock['channels'].acquire()
             for chan in self.channels.keys():
-                logger.debug('Running a periodic refresh for {}.'.format(chan))
+                logger.debug('periodic: %s', chan)
                 res = self.get('rooms/{}'.format(chan[1:]))
                 messages = list()
                 for msg in res.json()['messages']:
@@ -526,6 +520,7 @@ class Client:
 
         :param chan: Channel name
         """
+        logger.debug('keepalive: %s', chan)
         msg = '[ malíček/keepalive {} ]'.format(
             str.lower(''.join(random.choice(string.hexdigits) for i in range(16)))
         )
@@ -673,7 +668,7 @@ class Client:
 
         :returns: True if we managed to log in, False otherwise
         """
-        logger.debug('Logging in.')
+        logger.debug('login: %s', self.user)
         r = self.post(
             'login',
             {
@@ -690,7 +685,7 @@ class Client:
         Calls the /logout resource.  The only real use is a cleanup, so
         this gets called from the destructor.
         """
-        logger.debug('Logging out.')
+        logger.debug('logout: %s', self.user)
         self.get('logout')
 
     def rooms(self):
@@ -719,7 +714,7 @@ class Client:
         :param target: The target, typically a channel
         :param message: The message to send
         """
-        logger.debug('do_privmsg: {}, {}, {}'.format(sender, target, message))
+        logger.debug('do_privmsg: %s, %s, %s', sender, target, message)
         if sender != '*':
             sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
         self.socket.sendall(':{} PRIVMSG {} :{}'.format(
@@ -746,7 +741,7 @@ class Client:
         :param target: The target, typically a channel
         :param message: The message to send
         """
-        logger.debug('do_notice: {}, {}, {}'.format(sender, target, message))
+        logger.debug('do_notice: %s, %s, %s', sender, target, message)
         if sender != '*':
             sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
         self.socket.sendall(':{} NOTICE {} :{}'.format(
@@ -772,7 +767,7 @@ class Client:
         :param sender: The joining person, their NICK
         :param channel: The channel they are joining
         """
-        logger.debug('do_join: {}, {}'.format(sender, channel))
+        logger.debug('do_join: %s, %s', sender, channel)
         if sender != '*':
             sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
         self.socket.sendall(':{} JOIN {}'.format(
@@ -799,7 +794,7 @@ class Client:
         :param channel: The channel they are leaving
         :param msg: Optional parting message
         """
-        logger.debug('do_part: {}, {}, {}'.format(sender, channel, msg))
+        logger.debug('do_part: %s, %s, %s', sender, channel, msg)
         if sender != '*':
             sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
         self.socket.sendall(':{} PART {} :{}'.format(
@@ -822,7 +817,7 @@ class Client:
 
         :param message: The error message to send
         """
-        logger.debug('do_error: {}'.format(message))
+        logger.debug('do_error: %s', message)
         message = message or 'An error is an error.'
         self.socket.sendall(':{} ERROR :{}'.format(
                 SERVER,
@@ -839,7 +834,7 @@ class Client:
 
         :param args: <password>
         """
-        logger.debug('handle_pass: (args hidden)')
+        logger.debug('handle_pass: ***')
         self.password = args
 
     def handle_nick(self, args):
@@ -852,7 +847,7 @@ class Client:
 
         :param args: <nickname>
         """
-        logger.debug('handle_nick: {}'.format(args))
+        logger.debug('handle_nick: %s', args)
         self.user = args
         self.register()
 
@@ -868,7 +863,7 @@ class Client:
 
         :param args: <USER string>
         """
-        logger.debug('handle_user: (no args)')
+        logger.debug('handle_user: %s', args)
         self.userstring = args
         self.register()
 
@@ -882,7 +877,6 @@ class Client:
         pass
 
     # TODO: Leave all channels once done debugging
-    # TODO: Respond with ERROR, huh
     def handle_quit(self, args):
         """Handle QUIT commands.
 
@@ -892,9 +886,10 @@ class Client:
         Except that we don't do part the channels yet.  It's too early in
         the development and it could hinder testing with unnecessary spam.
         """
-        logger.debug('handle_quit: (no args)')
+        logger.debug('handle_quit: -')
         sel.unregister(self.socket)
         try:
+            self.do_error('Buh-bye!')
             self.socket.close()
         except:
             pass
@@ -920,7 +915,7 @@ class Client:
 
         :param args: [0|<channel>[,<channel>]* [<key>[,<key>]*]]
         """
-        logger.debug('handle_join: {}'.format(args))
+        logger.debug('handle_join: %s', args)
         if not args:
             return
         if args == '0':
@@ -1007,7 +1002,7 @@ class Client:
 
         :param args: <channel>[,<channel>]*[ :<message>]
         """
-        logger.debug('handle_part: {}'.format(args))
+        logger.debug('handle_part: %s', args)
         for chan in args.split(' ')[0].split(','):
             self.lock['channels'].acquire()
             del self.channels[chan]
@@ -1026,12 +1021,12 @@ class Client:
 
         :param args: ...
         """
-        logger.debug('handle_topic: (no args)')
+        logger.debug('handle_topic: %s', args)
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     # TODO: Implement this
     def handle_names(self, args):
-        logger.debug('handle_names: {}'.format(args))
+        logger.debug('handle_names: %s', args)
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     # TODO: Add topic to name (blocked by Malicek support)
@@ -1053,7 +1048,7 @@ class Client:
 
         :param args: [<channel>[,<channel>]* [<target>]]
         """
-        logger.debug('handle_list: {}'.format(args))
+        logger.debug('handle_list: %s', args)
         only = set()
         if args:
             for pattern in args.split(' ')[0].split(','):
@@ -1109,7 +1104,7 @@ class Client:
 
         :param args: <msgtarget> <text>
         """
-        logger.debug('handle_privmsg: {}'.format(args))
+        logger.debug('handle_privmsg: %s', args)
         chan, msg = args.split(' ', 1)
         if not chan.startswith('#'):
             self.error(IRC.ERR_NOSUCHNICK)
@@ -1145,7 +1140,7 @@ class Client:
 
         :param args: <msgtarget> <text>
         """
-        logger.debug('handle_notice: {}'.format(args))
+        logger.debug('handle_notice: %s', args)
         self.handle_privmsg(args)
 
     def handle_motd(self, args):
@@ -1218,7 +1213,7 @@ class Client:
 
         :param args: [<mask> [o]]
         """
-        logger.debug('handle_who: {}'.format(args))
+        logger.debug('handle_who: %s', args)
         args = args or ''
         rooms = self.rooms()
         args = args.split(' ')
@@ -1291,7 +1286,7 @@ class Client:
 
         :param args: [target] <mask>[,<mask>]*
         """
-        logger.debug('handle_whois: {}'.format(args))
+        logger.debug('handle_whois: %s', args)
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     # TODO: Implement this
@@ -1302,7 +1297,7 @@ class Client:
 
         :param args: <nick>[,<nick>]* [<count> [<target>]]
         """
-        logger.debug('handle_whowas: {}'.format(args))
+        logger.debug('handle_whowas: %s', args)
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     def handle_kill(self, args):
@@ -1320,7 +1315,7 @@ class Client:
 
         :param args: <server> [<server>]
         """
-        logger.debug('handle_ping: {}'.format(args))
+        logger.debug('handle_ping: %s', args)
         self.reply('PONG {}'.format(
             SERVER,
         ))
@@ -1333,7 +1328,7 @@ class Client:
 
         :param args: <server> [<server>]
         """
-        logger.debug('handle_pong: {}'.format(args))
+        logger.debug('handle_pong: %s', args)
         return
 
     def handle_error(self, args):
@@ -1346,7 +1341,7 @@ class Client:
 
         :param args: <message>
         """
-        logger.debug('handle_error: {}'.format(args))
+        logger.debug('handle_error: %s', args)
 
     def handle_away(self, args):
         pass
