@@ -51,38 +51,138 @@ class IRC(enum.Enum):
     RPL_CREATED = '003'
     RPL_MYINFO = '004'
     RPL_BOUNCE = '005'
+    RPL_TRACELINK = '200'
+    RPL_TRACECONNECTING = '201'
+    RPL_TRACEHANDSHAKE = '202'
+    RPL_TRACEUNKNOWN = '203'
+    RPL_TRACEOPERATOR = '204'
+    RPL_TRACEUSER = '205'
+    RPL_TRACESERVER = '206'
+    RPL_TRACESERVICE = '207'
+    RPL_TRACENEWTYPE = '208'
+    RPL_TRACECLASS = '209'
+    RPL_TRACERECONNECT = '210'
+    RPL_STATSLINKINFO = '211'
+    RPL_STATSCOMMANDS = '212'
+    RPL_ENDOFSTATS = '219'
+    RPL_STATSUPTIME = '242'
+    RPL_STATSONLINE = '243'
+    RPL_UMODEIS = '221'
+    RPL_SERVLIST = '234'
+    RPL_SERVLISTEND = '235'
+    RPL_LUSERCLIENT = '251'
+    RPL_LUSEROP = '252'
+    RPL_LUSERUNKNOWN = '253'
+    RPL_LUSERCHANNELS = '254'
+    RPL_LUSERME = '255'
+    RPL_ADMINME = '236'
+    RPL_ADMINLOC1 = '257'
+    RPL_ADMINLOC2 = '258'
+    RPL_ADMINEMAIL = '259'
+    RPL_TRACELOG = '261'
+    RPL_TRACEEND = '262'
+    RPL_TRYAGAIN = '263'
+    RPL_AWAY = '301'
     RPL_USERHOST = '302'
     RPL_ISON = '303'
-    RPL_AWAY = '301'
     RPL_UNAWAY = '305'
     RPL_NOWAWAY = '306'
     RPL_WHOISUSER = '311'
     RPL_WHOISSERVER = '312'
     RPL_WHOISOPERATOR = '313'
+    RPL_WHOWASUSER = '314'
     RPL_ENDOFWHO = '315'
     RPL_WHOISIDLE = '317'
     RPL_ENDOFWHOIS = '318'
     RPL_WHOISCHANNELS = '319'
-    RPL_WHOWASUSER = '314'
-    RPL_ENDOFWHOWAS = '369'
     RPL_LISTSTART = '321'
     RPL_LIST = '322'
     RPL_LISTEND = '323'
+    RPL_CHANNELMODEIS = '324'
+    RPL_UNIQOPIS = '325'
+    RPL_NOTOPIC = '331'
     RPL_TOPIC = '332'
+    RPL_INVITING = '341'
+    RPL_SUMMONING = '342'
+    RPL_INVITELIST = '346'
+    RPL_ENDOFINVITELIST = '347'
+    RPL_EXCEPTLIST = '348'
+    RPL_ENDOFEXCEPTLIST = '349'
+    RPL_VERSION = '351'
     RPL_WHOREPLY = '352'
     RPL_NAMEREPLY = '353'
+    RPL_LINKS = '364'
+    RPL_ENDOFLINKS = '365'
     RPL_ENDOFNAMES = '366'
+    RPL_BANLIST = '367'
+    RPL_ENDOFBANLIST = '368'
+    RPL_ENDOFWHOWAS = '369'
+    RPL_INFO = '371'
+    RPL_MOTD = '372'
+    RPL_ENDOFINFO = '374'
+    RPL_MOTDSTART = '375'
+    RPL_ENDOFMOTD = '376'
+    RPL_YOUREOPER = '381'
+    RPL_REHASHING = '382'
+    RPL_YOURESERVICE = '383'
+    RPL_TIME = '391'
+    RPL_USERSSTART = '392'
+    RPL_USERS = '393'
+    RPL_ENDOFUSERS = '394'
+    RPL_NOUSERS = '395'
     ERR_NOSUCHNICK = '401'
+    ERR_NOSUCHSERVER = '402'
     ERR_NOSUCHCHANNEL = '403'
     ERR_CANNOTSENDTOCHAN = '404'
+    ERR_TOOMANYCHANNELS = '405'
+    ERR_WASNOSUCHNICK = '406'
+    ERR_TOOMANYTARGETS = '407'
+    ERR_NOSUCHSERVICE = '408'
+    ERR_NOORIGIN = '409'
     ERR_NORECIPIENT = '411'
     ERR_NOTEXTTOSEND = '412'
+    ERR_NOTOPLEVEL = '413'
+    ERR_WILDTOPLEVEL = '414'
+    ERR_BADMASK = '415'
     ERR_UNKNOWNCOMMAND = '421'
+    ERR_NOMOTD = '422'
+    ERR_NOADMININFO = '423'
+    ERR_FILEERROR = '424'
+    ERR_NONICKNAMEGIVEN = '431'
+    ERR_ERRONEUSNICKNAME = '432'
+    ERR_NICKNAMEINUSE = '433'
+    ERR_NICKCOLLISION = '436'
+    ERR_UNAVAILRESOURCE = '437'
+    ERR_USERNOTINCHANNEL = '441'
+    ERR_NOTONCHANNEL = '442'
+    ERR_USERONCHANNEL = '443'
+    ERR_NOLOGIN = '444'
+    ERR_SUMMONDISABLED = '445'
+    ERR_USERSDISABLED = '446'
     ERR_NOTREGISTERED = '451'
     ERR_NEEDMOREPARAMS = '461'
     ERR_ALREADYREGISTERED = '462'
+    ERR_NOPERMFORHOST = '463'
     ERR_PASSWDMISMATCH = '464'
-    # FIXME: More to add
+    ERR_YOUREBANNEDCREEP = '465'
+    ERR_YOUWILLBEBANNED = '466'
+    ERR_KEYSET = '467'
+    ERR_CHANNELISFULL = '471'
+    ERR_UNKNOWNMODE = '472'
+    ERR_INVITEONLYCHAN = '473'
+    ERR_BANNEDFROMCHAN = '474'
+    ERR_BADCHANNELKEY = '475'
+    ERR_BADCHANMASK = '476'
+    ERR_NOCHANMODES = '477'
+    ERR_BANLISTFULL = '478'
+    ERR_NOPRIVILEGES = '481'
+    ERR_CHANOPRIVSNEEDED = '482'
+    ERR_CANTKILLSERVER = '483'
+    ERR_RESTRICTED = '484'
+    ERR_UNIQOPPRIVSNEEDED = '485'
+    ERR_NOOPERHOST = '491'
+    ERR_UMODEUNKNOWNFLAG = '501'
+    ERR_USERSDONTMATCH = '502'
 
 class Client:
     """Provides an abstraction of the connection session.
@@ -194,40 +294,96 @@ class Client:
         elif not self.registered() and cmd not in ('NICK', 'USER', 'PASS'):
             self.error(IRC.ERR_NOTREGISTERED)
             return
-        if cmd == 'NICK':
-            self.handle_nick(args)
+        if cmd == 'PASS':
+            self.handle_pass(args)
         elif cmd == 'USER':
             self.handle_user(args)
-        elif cmd == 'PASS':
-            self.handle_pass(args)
+        elif cmd == 'NICK':
+            self.handle_nick(args)
+        elif cmd == 'OPER':
+            self.handle_oper(args)
+        elif cmd == 'MODE':
+            self.handle_mode(args)
+        elif cmd == 'SERVICE':
+            self.handle_service(args)
         elif cmd == 'QUIT':
-            self.handle_quit()
-        elif cmd == 'PING':
-            self.handle_ping(args)
-        elif cmd == 'PONG':
-            self.handle_pong(args)
-        elif cmd == 'LIST':
-            self.handle_list(args)
+            self.handle_quit(args)
+        elif cmd == 'SQUIT':
+            self.handle_squit(args)
         elif cmd == 'JOIN':
             self.handle_join(args)
         elif cmd == 'PART':
             self.handle_part(args)
         elif cmd == 'TOPIC':
-            self.handle_topic()
+            self.handle_topic(args)
         elif cmd == 'NAMES':
             self.handle_names(args)
+        elif cmd == 'LIST':
+            self.handle_list(args)
+        elif cmd == 'INVITE':
+            self.handle_invite(args)
+        elif cmd == 'KICK':
+            self.handle_kick(args)
         elif cmd == 'PRIVMSG':
             self.handle_privmsg(args)
         elif cmd == 'NOTICE':
             self.handle_notice(args)
+        elif cmd == 'MOTD':
+            self.handle_motd(args)
+        elif cmd == 'LUSERS':
+            self.handle_lusers(args)
+        elif cmd == 'VERSION':
+            self.handle_version(args)
+        elif cmd == 'STATS':
+            self.handle_stats(args)
+        elif cmd == 'LINKS':
+            self.handle_link(args)
+        elif cmd == 'TIME':
+            cmd.handle_time(args)
+        elif cmd == 'CONNECT':
+            cmd.handle_connect(args)
+        elif cmd == 'TRACE':
+            cmd.handle_trace(args)
+        elif cmd == 'ADMIN':
+            self.handle_admin(args)
+        elif cmd == 'INFO':
+            self.handle_info(args)
+        elif cmd == 'SERVLIST':
+            self.handle_servlist(args)
+        elif cmd == 'SQUERY':
+            self.handle_squery(args)
         elif cmd == 'WHO':
             self.handle_who(args)
         elif cmd == 'WHOIS':
             self.handle_whois(args)
         elif cmd == 'WHOWAS':
             self.handle_whowas(args)
+        elif cmd == 'KILL':
+            self.handle_kill(args)
+        elif cmd == 'PING':
+            self.handle_ping(args)
+        elif cmd == 'PONG':
+            self.handle_pong(args)
         elif cmd == 'ERROR':
             self.handle_error(args)
+        elif cmd == 'AWAY':
+            self.handle_away(args)
+        elif cmd == 'REHASH':
+            self.handle_rehash(args)
+        elif cmd == 'DIE':
+            self.handle_die(args)
+        elif cmd == 'RESTART':
+            self.handle_restart(args)
+        elif cmd == 'SUMMON':
+            self.handle_summon(args)
+        elif cmd == 'USERS':
+            self.handle_users(args)
+        elif cmd == 'WALLOPS':
+            self.handle_wallops(args)
+        elif cmd == 'USERHOST':
+            self.handle_userhost(args)
+        elif cmd == 'ISON':
+            self.handle_ison(args)
         else:
             self.error(IRC.ERR_UNKNOWNCOMMAND)
             logger.warning('Unknown command: {}'.format(cmd))
@@ -547,25 +703,31 @@ class Client:
         logger.debug('Fetching rooms.')
         return self.get('rooms').json()
 
-    def do_error(self, message=None):
-        """Send the ERROR command.
+    def do_privmsg(self, sender, target, message):
+        """Send the PRIVMSG command.
 
-        These are emitted by the server under special circumstances and they
-        always target our only user, self.user.
+        Sends a PRIVMSG message on behalf of the sender.
 
-        Not to be used for ERR replies.  See Client.error() for those.
+        The sender is the sender's nickname, which is translated into a
+        virtual username formed from the link ID + @alik.cz.  If the link
+        ID is unavailable, *@alik.cz is used instead.
 
-        If no message is specified, "An error is an error." is sent.
+        In the rare event of sending PART of behalf of *, don't do any
+        user mangling.
 
-        :param message: The error message to send
+        :param sender: The messaging person, their NICK
+        :param target: The target, typically a channel
+        :param message: The message to send
         """
-        logger.debug('do_error: {}'.format(message))
-        message = message or 'An error is an error.'
-        self.socket.sendall(':{} ERROR :{}'.format(
-                SERVER,
+        logger.debug('do_privmsg: {}, {}, {}'.format(sender, target, message))
+        if sender != '*':
+            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
+        self.socket.sendall(':{} PRIVMSG {} :{}'.format(
+                sender,
+                target,
                 message,
             ).encode(ENCODING) + \
-            b'\r\n',
+            b'\r\n'
         )
 
     def do_notice(self, sender, target, message):
@@ -588,33 +750,6 @@ class Client:
         if sender != '*':
             sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
         self.socket.sendall(':{} NOTICE {} :{}'.format(
-                sender,
-                target,
-                message,
-            ).encode(ENCODING) + \
-            b'\r\n'
-        )
-
-    def do_privmsg(self, sender, target, message):
-        """Send the PRIVMSG command.
-
-        Sends a PRIVMSG message on behalf of the sender.
-
-        The sender is the sender's nickname, which is translated into a
-        virtual username formed from the link ID + @alik.cz.  If the link
-        ID is unavailable, *@alik.cz is used instead.
-
-        In the rare event of sending PART of behalf of *, don't do any
-        user mangling.
-
-        :param sender: The messaging person, their NICK
-        :param target: The target, typically a channel
-        :param message: The message to send
-        """
-        logger.debug('do_privmsg: {}, {}, {}'.format(sender, target, message))
-        if sender != '*':
-            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
-        self.socket.sendall(':{} PRIVMSG {} :{}'.format(
                 sender,
                 target,
                 message,
@@ -675,6 +810,38 @@ class Client:
             b'\r\n'
         )
 
+    def do_error(self, message=None):
+        """Send the ERROR command.
+
+        These are emitted by the server under special circumstances and they
+        always target our only user, self.user.
+
+        Not to be used for ERR replies.  See Client.error() for those.
+
+        If no message is specified, "An error is an error." is sent.
+
+        :param message: The error message to send
+        """
+        logger.debug('do_error: {}'.format(message))
+        message = message or 'An error is an error.'
+        self.socket.sendall(':{} ERROR :{}'.format(
+                SERVER,
+                message,
+            ).encode(ENCODING) + \
+            b'\r\n',
+        )
+
+    def handle_pass(self, args):
+        """Handle PASS commands.
+
+        Required for registering a session with us.  This needs to preceed
+        the USER command which itself finishes the registration.
+
+        :param args: <password>
+        """
+        logger.debug('handle_pass: (args hidden)')
+        self.password = args
+
     def handle_nick(self, args):
         """Handle NICK commands.
 
@@ -705,20 +872,18 @@ class Client:
         self.userstring = args
         self.register()
 
-    def handle_pass(self, args):
-        """Handle PASS commands.
+    def handle_oper(self, args):
+        pass
 
-        Required for registering a session with us.  This needs to preceed
-        the USER command which itself finishes the registration.
+    def handle_mode(self, args):
+        pass
 
-        :param args: <password>
-        """
-        logger.debug('handle_pass: (args hidden)')
-        self.password = args
+    def handle_server(self, args):
+        pass
 
     # TODO: Leave all channels once done debugging
     # TODO: Respond with ERROR, huh
-    def handle_quit(self):
+    def handle_quit(self, args):
         """Handle QUIT commands.
 
         The client is quitting.  Part all the active channels, unregister
@@ -734,50 +899,122 @@ class Client:
         except:
             pass
 
-    def handle_ping(self, args):
-        """Handle PING commands.
+    def handle_squit(self, args):
+        pass
 
-        Respond with an appropriate PONG.  Since we are a virtual
-        server, we speak for all of them.  In the two argument form,
-        the first argument is the origin, such as the user name or
-        another server, and the other argument is the target.
+    # TODO: Backlog whispers
+    def handle_join(self, args):
+        """Handle JOIN commands.
 
-        In a single argument form, only the target is given.
+        Attempts to join the specified channels.  Potential keys are
+        of no use to us so they're ignored.  JOIN must be confirmed
+        upon success.  The client should also receive the channel topic
+        and the list of users, including self.  Additionaly, we also
+        send all visible backlog messages as the '*' user.
 
-        :param args: <server> [<server>]
+        Joining "0" is an equivalent of parting all the currently joined
+        channels.
+
+        Joining with no arguments is non-standard but common.  We accept
+        it and do nothing.
+
+        :param args: [0|<channel>[,<channel>]* [<key>[,<key>]*]]
         """
-        logger.debug('handle_ping: {}'.format(args))
-        self.reply('PONG {}'.format(
-            SERVER,
-        ))
+        logger.debug('handle_join: {}'.format(args))
+        if not args:
+            return
+        if args == '0':
+            self.lock['channels'].acquire()
+            for chan in channels:
+                del self.channels[chan]
+                self.post(
+                    'rooms/{}'.format(chan[1:]),
+                    { 'action': 'leave' }
+                )
+                self.do_part(self.user, chan)
+            self.lock['channels'].release()
+        for chan in args.split(' ')[0].split(','):
+            res = self.get('rooms/{}'.format(chan[1:]))
+            if res.status_code != 200:
+                continue
+            for usr in res.json()['users']:
+                self.info(
+                    usr['name'],
+                    uid=usr['id'],
+                    link=usr['link'],
+                    sex=usr['sex'],
+                    age=usr['age'],
+                    oper=True if usr['admin'] else False,
+                )
+            self.do_join(self.user, chan)
+            self.reply('{} {} {} :{}'.format(
+                IRC.RPL_TOPIC.value,
+                self.user,
+                chan,
+                '{}{}'.format(
+                    res.json()['name'],
+                    ' | {}'.format(res.json()['topic']) if res.json()['topic'] else '',
+                ),
+            ))
+            self.reply('{} {} = {} :{}'.format(
+                IRC.RPL_NAMEREPLY.value,
+                self.user,
+                chan,
+                ' '.join(
+                    '{}{}'.format(
+                        ('@' if x['admin'] else ''),
+                        x['name'],
+                    ) for x in res.json()['users']
+                )
+            ))
+            self.reply('{} {} {} :{}'.format(
+                IRC.RPL_ENDOFNAMES.value,
+                self.user,
+                chan,
+                'End of /NAMES list.',
+            ))
+            messages = res.json()['messages']
+            messages.reverse()
+            for msg in messages:
+                self.do_privmsg(
+                    '*',
+                    chan,
+                    '[{}] ({}) {}'.format(
+                        msg['time'] if msg['time'] else '??:??:??',
+                        msg['nick'] if msg['nick'] else '*',
+                        emoji(msg['message']),
+                    ),
+                )
+            self.lock['channels'].acquire()
+            self.channels[chan] = {
+                'activity': int(time.time()),
+            }
+            if messages:
+                self.channels[chan]['seen'] = messages[-1]
+            self.lock['channels'].release()
 
-    def handle_pong(self, args):
-        """Handle PONG commands.
+    def handle_part(self, args):
+        """Handle PART commands.
 
-        Responses to PINGs.  We don't send any PINGs but it's okay
-        if the client somehow sends these.  Just drop them.
+        Leaves the selected list of channels.  We do not have to
+        check their presence as the backend doesn't care, although
+        we could potentially cut a few nonsensical requests.
 
-        :param args: <server> [<server>]
+        We don't have anywhere to send the parting message so we
+        simply ignore it.
+
+        :param args: <channel>[,<channel>]*[ :<message>]
         """
-        logger.debug('handle_pong: {}'.format(args))
-        return
-
-    def handle_error(self, args):
-        """Handle ERROR commands.
-
-        The ERROR command is only supposed to be sent by servers, not
-        clients.  There are no defined numerics for responses to these.
-        We could send ERR_UNKNOWNCOMMAND, but since we're handling it,
-        we'll just ignore it.
-
-        :param args: <message>
-        """
-        logger.debug('handle_error: {}'.format(args))
-
-    # TODO: Implement this
-    def handle_names(self, args):
-        logger.debug('handle_names: {}'.format(args))
-        self.error(IRC.ERR_UNKNOWNCOMMAND)
+        logger.debug('handle_part: {}'.format(args))
+        for chan in args.split(' ')[0].split(','):
+            self.lock['channels'].acquire()
+            del self.channels[chan]
+            self.lock['channels'].release()
+            self.post(
+                'rooms/{}'.format(chan[1:]),
+                { 'action': 'leave' },
+            )
+            self.do_part(self.user, chan)
 
     # TODO: Implement this
     def handle_topic(self, args):
@@ -788,6 +1025,11 @@ class Client:
         :param args: ...
         """
         logger.debug('handle_topic: (no args)')
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
+
+    # TODO: Implement this
+    def handle_names(self, args):
+        logger.debug('handle_names: {}'.format(args))
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     # TODO: Add topic to name (blocked by Malicek support)
@@ -841,6 +1083,107 @@ class Client:
             IRC.RPL_LISTEND.value,
             self.user,
         ))
+
+    def handle_invite(self, args):
+        pass
+
+    def handle_kick(self, args):
+        pass
+
+    # TODO: Handle whispering
+    # TODO: Remember colors per room and use them
+    def handle_privmsg(self, args):
+        """Handle PRIVMSG commands.
+
+        The standard IRC messaging method, sends commands to channels
+        or users.  Due to Alík's limitations, private messages cannot
+        work outside of channels.  Messaging users is therefore disabled.
+
+        Sending messages to channels one hasn't joined is similarly
+        impossible and returns an error.
+
+        ACTION messages are converted to "*<text>*" and sent as regular
+        messages instead.  SOH is stripped.
+
+        :param args: <msgtarget> <text>
+        """
+        logger.debug('handle_privmsg: {}'.format(args))
+        chan, msg = args.split(' ', 1)
+        if not chan.startswith('#'):
+            self.error(IRC.ERR_NOSUCHNICK)
+            return
+        if len(msg) < 2:
+            self.error(IRC.ERR_NOTEXTTOSEND)
+            return
+        self.lock['channels'].acquire()
+        if chan not in self.channels:
+            self.error(IRC.ERR_CANNOTSENDTOCHAN)
+            return
+        msg = msg[1:]
+        if msg.startswith('\x01') and msg.endswith('\x01'):
+            msg = msg.replace('\x01ACTION ', '*')
+            msg = msg.replace('\x01', '*')
+        self.post(
+            'rooms/{}'.format(chan[1:]),
+            {
+                'action': 'post',
+                'to': 0,
+                'message': msg,
+                'color': COLOR,
+            },
+        )
+        self.channels[chan]['activity'] = int(time.time())
+        self.lock['channels'].release()
+
+    def handle_notice(self, args):
+        """Handle NOTICE commands.
+
+        This just calls handle_privmsg() as they're virtually
+        identical in our context.
+
+        :param args: <msgtarget> <text>
+        """
+        logger.debug('handle_notice: {}'.format(args))
+        self.handle_privmsg(args)
+
+    def handle_motd(self, args):
+        pass
+
+    def handle_lusers(self, args):
+        pass
+
+    def handle_version(self, args):
+        pass
+
+    def handle_stats(self, args):
+        pass
+
+    def handle_stats(self, args):
+        pass
+
+    def handle_links(self, args):
+        pass
+
+    def handle_time(self, args):
+        pass
+
+    def handle_connect(self, args):
+        pass
+
+    def handle_trace(self, args):
+        pass
+
+    def handle_admin(self, args):
+        pass
+
+    def handle_info(self, args):
+        pass
+
+    def handle_servlist(self, args):
+        pass
+
+    def handle_squery(self, args):
+        pass
 
     # TODO: Age requires a Malicek update
     def handle_who(self, args):
@@ -960,175 +1303,75 @@ class Client:
         logger.debug('handle_whowas: {}'.format(args))
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
-    # TODO: Backlog whispers
-    def handle_join(self, args):
-        """Handle JOIN commands.
+    def handle_kill(self, args):
+        pass
 
-        Attempts to join the specified channels.  Potential keys are
-        of no use to us so they're ignored.  JOIN must be confirmed
-        upon success.  The client should also receive the channel topic
-        and the list of users, including self.  Additionaly, we also
-        send all visible backlog messages as the '*' user.
+    def handle_ping(self, args):
+        """Handle PING commands.
 
-        Joining "0" is an equivalent of parting all the currently joined
-        channels.
+        Respond with an appropriate PONG.  Since we are a virtual
+        server, we speak for all of them.  In the two argument form,
+        the first argument is the origin, such as the user name or
+        another server, and the other argument is the target.
 
-        Joining with no arguments is non-standard but common.  We accept
-        it and do nothing.
+        In a single argument form, only the target is given.
 
-        :param args: [0|<channel>[,<channel>]* [<key>[,<key>]*]]
+        :param args: <server> [<server>]
         """
-        logger.debug('handle_join: {}'.format(args))
-        if not args:
-            return
-        if args == '0':
-            self.lock['channels'].acquire()
-            for chan in channels:
-                del self.channels[chan]
-                self.post(
-                    'rooms/{}'.format(chan[1:]),
-                    { 'action': 'leave' }
-                )
-                self.do_part(self.user, chan)
-            self.lock['channels'].release()
-        for chan in args.split(' ')[0].split(','):
-            res = self.get('rooms/{}'.format(chan[1:]))
-            if res.status_code != 200:
-                continue
-            for usr in res.json()['users']:
-                self.info(
-                    usr['name'],
-                    uid=usr['id'],
-                    link=usr['link'],
-                    sex=usr['sex'],
-                    age=usr['age'],
-                    oper=True if usr['admin'] else False,
-                )
-            self.do_join(self.user, chan)
-            self.reply('{} {} {} :{}'.format(
-                IRC.RPL_TOPIC.value,
-                self.user,
-                chan,
-                '{}{}'.format(
-                    res.json()['name'],
-                    ' | {}'.format(res.json()['topic']) if res.json()['topic'] else '',
-                ),
-            ))
-            self.reply('{} {} = {} :{}'.format(
-                IRC.RPL_NAMEREPLY.value,
-                self.user,
-                chan,
-                ' '.join(
-                    '{}{}'.format(
-                        ('@' if x['admin'] else ''),
-                        x['name'],
-                    ) for x in res.json()['users']
-                )
-            ))
-            self.reply('{} {} {} :{}'.format(
-                IRC.RPL_ENDOFNAMES.value,
-                self.user,
-                chan,
-                'End of /NAMES list.',
-            ))
-            messages = res.json()['messages']
-            messages.reverse()
-            for msg in messages:
-                self.do_privmsg(
-                    '*',
-                    chan,
-                    '[{}] ({}) {}'.format(
-                        msg['time'] if msg['time'] else '??:??:??',
-                        msg['nick'] if msg['nick'] else '*',
-                        emoji(msg['message']),
-                    ),
-                )
-            self.lock['channels'].acquire()
-            self.channels[chan] = {
-                'activity': int(time.time()),
-            }
-            if messages:
-                self.channels[chan]['seen'] = messages[-1]
-            self.lock['channels'].release()
+        logger.debug('handle_ping: {}'.format(args))
+        self.reply('PONG {}'.format(
+            SERVER,
+        ))
 
-    def handle_part(self, args):
-        """Handle PART commands.
+    def handle_pong(self, args):
+        """Handle PONG commands.
 
-        Leaves the selected list of channels.  We do not have to
-        check their presence as the backend doesn't care, although
-        we could potentially cut a few nonsensical requests.
+        Responses to PINGs.  We don't send any PINGs but it's okay
+        if the client somehow sends these.  Just drop them.
 
-        We don't have anywhere to send the parting message so we
-        simply ignore it.
-
-        :param args: <channel>[,<channel>]*[ :<message>]
+        :param args: <server> [<server>]
         """
-        logger.debug('handle_part: {}'.format(args))
-        for chan in args.split(' ')[0].split(','):
-            self.lock['channels'].acquire()
-            del self.channels[chan]
-            self.lock['channels'].release()
-            self.post(
-                'rooms/{}'.format(chan[1:]),
-                { 'action': 'leave' },
-            )
-            self.do_part(self.user, chan)
+        logger.debug('handle_pong: {}'.format(args))
+        return
 
-    # TODO: Handle whispering
-    # TODO: Remember colors per room and use them
-    def handle_privmsg(self, args):
-        """Handle PRIVMSG commands.
+    def handle_error(self, args):
+        """Handle ERROR commands.
 
-        The standard IRC messaging method, sends commands to channels
-        or users.  Due to Alík's limitations, private messages cannot
-        work outside of channels.  Messaging users is therefore disabled.
+        The ERROR command is only supposed to be sent by servers, not
+        clients.  There are no defined numerics for responses to these.
+        We could send ERR_UNKNOWNCOMMAND, but since we're handling it,
+        we'll just ignore it.
 
-        Sending messages to channels one hasn't joined is similarly
-        impossible and returns an error.
-
-        ACTION messages are converted to "*<text>*" and sent as regular
-        messages instead.  SOH is stripped.
-
-        :param args: <msgtarget> <text>
+        :param args: <message>
         """
-        logger.debug('handle_privmsg: {}'.format(args))
-        chan, msg = args.split(' ', 1)
-        if not chan.startswith('#'):
-            self.error(IRC.ERR_NOSUCHNICK)
-            return
-        if len(msg) < 2:
-            self.error(IRC.ERR_NOTEXTTOSEND)
-            return
-        self.lock['channels'].acquire()
-        if chan not in self.channels:
-            self.error(IRC.ERR_CANNOTSENDTOCHAN)
-            return
-        msg = msg[1:]
-        if msg.startswith('\x01') and msg.endswith('\x01'):
-            msg = msg.replace('\x01ACTION ', '*')
-            msg = msg.replace('\x01', '*')
-        self.post(
-            'rooms/{}'.format(chan[1:]),
-            {
-                'action': 'post',
-                'to': 0,
-                'message': msg,
-                'color': COLOR,
-            },
-        )
-        self.channels[chan]['activity'] = int(time.time())
-        self.lock['channels'].release()
+        logger.debug('handle_error: {}'.format(args))
 
-    def handle_notice(self, args):
-        """Handle NOTICE commands.
+    def handle_away(self, args):
+        pass
 
-        This just calls handle_privmsg() as they're virtually
-        identical in our context.
+    def handle_rehash(self, args):
+        pass
 
-        :param args: <msgtarget> <text>
-        """
-        logger.debug('handle_notice: {}'.format(args))
-        self.handle_privmsg(args)
+    def handle_die(self, args):
+        pass
+
+    def handle_restart(self, args):
+        pass
+
+    def handle_summon(self, args):
+        pass
+
+    def handle_users(self, args):
+        pass
+
+    def handle_wallops(self, args):
+        pass
+
+    def handle_userhost(self, args):
+        pass
+
+    def handle_ison(self, args):
+        pass
 
 def sanitize(nick):
     """Sanitize nicks that are not generally acceptable
