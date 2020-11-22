@@ -226,6 +226,8 @@ class Client:
             self.handle_whois(args)
         elif cmd == 'WHOWAS':
             self.handle_whowas(args)
+        elif cmd == 'ERROR':
+            self.handle_error(args)
         else:
             self.error(IRC.ERR_UNKNOWNCOMMAND)
             logger.warning('Unknown command: {}'.format(cmd))
@@ -763,12 +765,14 @@ class Client:
     def handle_error(self, args):
         """Handle ERROR commands.
 
-        Not implemented.
+        The ERROR command is only supposed to be sent by servers, not
+        clients.  There are no defined numerics for responses to these.
+        We could send ERR_UNKNOWNCOMMAND, but since we're handling it,
+        we'll just ignore it.
 
-        :param args: ...
+        :param args: <message>
         """
         logger.debug('handle_error: {}'.format(args))
-        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     # TODO: Implement this
     def handle_names(self, args):
