@@ -452,8 +452,10 @@ class Client:
             respose = respose or 'Private messaging is unsupported.'
         elif err == IRC.ERR_NOTEXTTOSEND:
             response = response or 'No message specified.'
-        elif err == IRC.ERR_CANNOTSENDTOCHAN:
+        elif err in (IRC.ERR_CANNOTSENDTOCHAN, IRC.ERR_NOTONCHANNEL):
             response = response or 'You must join the channel first.'
+        elif err == IRC.ERR_NOPRIVILEGES:
+            response = response or 'You are not allowed to do that here.'
         response = response or err
         self.reply('{} {} :{}'.format(
             err.value,
@@ -483,8 +485,9 @@ class Client:
                 res = self.get('rooms/{}'.format(chan[1:]))
                 if not res:
                     continue
+                res = res.json()
                 messages = list()
-                for msg in res.json()['messages']:
+                for msg in res['messages']:
                     if chan not in self.channels:
                         return
                     if msg == self.channels[chan]['seen']:
@@ -497,7 +500,11 @@ class Client:
                 if ctime - self.channels[chan]['activity'] > 15 * 60:
                     if self.keepalive(chan):
                         self.channels[chan]['activity'] = ctime
-                for usr in res.json()['users']:
+                self.channels[chan]['topic'] = '{}{}'.format(
+                    res['name'],
+                    ' | {}'.format(res['topic']) if res['topic'] else '',
+                )
+                for usr in res['users']:
                     self.info(
                         usr['name'],
                         uid=usr['id'],
@@ -518,7 +525,7 @@ class Client:
                             continue
                         if msg['event']['type'] == 'part' or msg['event']['type'] == 'kick':
                             self.do_part(
-                                msg['event']['source'] if msg['event']['source'] else msg['event']['target'],
+                                msg['event']['source'] or msg['event']['target'],
                                 chan,
                                 msg['message'],
                             )
@@ -871,6 +878,9 @@ class Client:
         :param args: <password>
         """
         logger.debug('***')
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         self.password = args
 
     def handle_nick(self, args):
@@ -884,6 +894,9 @@ class Client:
         :param args: <nickname>
         """
         logger.debug(args)
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         self.user = args
         self.register()
 
@@ -900,17 +913,72 @@ class Client:
         :param args: <USER string>
         """
         logger.debug(args)
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         self.userstring = args
         self.register()
 
     def handle_oper(self, args):
-        pass
+        """Handle OPER commands.
 
+        Requires username + password but we don't really care.  We don't
+        support server administration, so just reject everything.
+
+        :param args: <username> <password>
+        """
+        logger.debug('***')
+        if not args or args.find(' ') == -1:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        self.error(IRC.ERR_PASSWDMISMATCH)
+
+    # TODO: Implement this
     def handle_mode(self, args):
-        pass
+        """Handle MODE commands.
+
+        Sets user or channel modes.  With no modes, just queries the current
+        modes.
+
+        Currently we don't support any modes.
+
+        In theory we could support an extremely limited subset of modes later.
+        These would include:
+
+            User mode w: Just our user; receives wallops or not
+
+            Channel mode n: Must be a member to message
+            Channel mode o: Query or set the channel operator, if possible
+            Channel mode O: Query the channel creator
+            Channel mode t: Must be the channel op to change toppic
+
+        Users could manipulate the user mode 'w' and the channel mode 'o',
+        assuming they're the operator.  They could query the channel mode 'O',
+        but only if they're on that channel due to backend limitations.
+
+        All channels could have the 'n' and 't' modes because that's just
+        our reality.  Question is whether it's useful.
+
+        :param args: <nick/channel> [<modes> [<params>]]
+        """
+        logger.debug(args)
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     def handle_service(self, args):
-        pass
+        """Handle SERVICE commands.
+
+        Services don't make any sense in our context.  Parse the message but
+        refuse to cooperate.
+
+        :param args: <nickname> <reserved> <dist> <type> <reserved> <info>
+        """
+        logger.debug(args)
+        if not args or args.count(' ') < 5:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     # TODO: Leave all channels once done debugging
     def handle_quit(self, args):
@@ -931,7 +999,18 @@ class Client:
             pass
 
     def handle_squit(self, args):
-        pass
+        """Handle SQUIT commands.
+
+        Used to close server-to-server links.  Makes zero sense in our
+        context.  Parse the message but return a privilege error.  No one
+        is an operator here.
+
+        :param args: <server> <comment>
+        """
+        if not args or not args.count(' '):
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        self.error(IRC.ERR_NOPRIVILEGES)
 
     # TODO: Backlog whispers
     def handle_join(self, args):
@@ -982,6 +1061,7 @@ class Client:
                 continue
             if res.status_code != 200:
                 continue
+            res = res.json()
             settings = self.get(
                 'rooms/{}'.format(chan[1:]),
                 params={
@@ -991,7 +1071,7 @@ class Client:
                 settings = {
                     'color': '#000000',
                 }
-            for usr in res.json()['users']:
+            for usr in res['users']:
                 self.info(
                     usr['name'],
                     uid=usr['id'],
@@ -1001,14 +1081,15 @@ class Client:
                     oper=bool(usr['admin']),
                 )
             self.do_join(self.user, chan)
+            topic = '{}{}'.format(
+                res['name'],
+                ' | {}'.format(res['topic']) if res['topic'] else '',
+            )
             self.reply('{} {} {} :{}'.format(
                 IRC.RPL_TOPIC.value,
                 self.user,
                 chan,
-                '{}{}'.format(
-                    res.json()['name'],
-                    ' | {}'.format(res.json()['topic']) if res.json()['topic'] else '',
-                ),
+                topic,
             ))
             self.reply('{} {} = {} :{}'.format(
                 IRC.RPL_NAMEREPLY.value,
@@ -1018,7 +1099,7 @@ class Client:
                     '{}{}'.format(
                         ('@' if x['admin'] else ''),
                         x['name'],
-                    ) for x in res.json()['users']
+                    ) for x in res['users']
                 )
             ))
             self.reply('{} {} {} :{}'.format(
@@ -1027,7 +1108,7 @@ class Client:
                 chan,
                 'End of /NAMES list.',
             ))
-            messages = res.json()['messages']
+            messages = res['messages']
             messages.reverse()
             for msg in messages:
                 self.do_privmsg(
@@ -1043,6 +1124,7 @@ class Client:
             self.channels[chan] = {
                 'activity': int(time.time()),
                 'color': settings.json()['color'],
+                'topic': topic,
             }
             if messages:
                 self.channels[chan]['seen'] = messages[-1]
@@ -1061,6 +1143,9 @@ class Client:
         :param args: <channel>[,<channel>]*[ :<message>]
         """
         logger.debug(args)
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         for chan in args.split(' ')[0].split(','):
             self.lock['channels'].acquire()
             if self.post(
@@ -1078,21 +1163,84 @@ class Client:
                 )
             self.lock['channels'].release()
 
-    # TODO: Implement this
+    # TODO: Implement topic setting
     def handle_topic(self, args):
         """Handle TOPIC commands.
 
-        Not implemented.
+        Queries or sets the channel topic.  Setting the channel topic
+        requires the channel operator status in all cases.
 
-        :param args: ...
+        Due to the current backend limitations, we can only query topics
+        for channels the user has joined.
+
+        :param args: <channel> [:<topic>]
         """
         logger.debug(args)
-        self.error(IRC.ERR_UNKNOWNCOMMAND)
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        if args.find(' ') != -1:
+            self.error(
+                IRC.ERR_UNKNOWNCOMMAND,
+                'Setting channel modes is currently unsupported.',
+            )
+            return
+        self.lock['channels'].acquire()
+        if not args in self.channels:
+            self.error(IRC.ERR_NOTONCHANNEL)
+        else:
+            self.reply('{} {} {} :{}'.format(
+                IRC.RPL_TOPIC.value,
+                self.user,
+                args,
+                self.channels[args]['topic'],
+            ))
+        self.lock['channels'].release()
 
-    # TODO: Implement this
     def handle_names(self, args):
+        """Handle NAMES commands.
+
+        The command provides yet another method to list users on the
+        given channel or channels.
+
+        Channels are optional.  With no arguments lists all the channels
+        and their occupants.  Bad channel names are okay.
+
+        Target doesn't make sense here, so we ignore it.
+
+        :param args: [<channel>[,<channel>]* [<target>]]
+        """
         logger.debug(args)
-        self.error(IRC.ERR_UNKNOWNCOMMAND)
+        rooms = self.rooms()
+        if not rooms:
+            self.error(
+                IRC.ERR_UNAVAILRESOURCE,
+                'Cannot fetch names, resource temporarily unavailable.',
+            )
+            return
+        only = set()
+        if args:
+            only.update(x[1:] for x in args.split(','))
+        for room in rooms:
+            if only and room['id'] not in only:
+                continue
+            self.reply('{} {} = #{} :{}'.format(
+                IRC.RPL_NAMEREPLY.value,
+                self.user,
+                room['id'],
+                ' '.join(
+                    '{}{}'.format(
+                        ('@' if x['admin'] else ''),
+                        x['name'],
+                    ) for x in room['users']
+                ),
+            ))
+            self.reply('{} {} #{} :{}'.format(
+                IRC.RPL_ENDOFNAMES.value,
+                self.user,
+                room['id'],
+                'End of NAMES list.',
+            ))
 
     # TODO: Add topic to name (blocked by Malicek support)
     def handle_list(self, args):
@@ -1177,6 +1325,9 @@ class Client:
         :param args: <msgtarget> <text>
         """
         logger.debug(args)
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         chan, msg = args.split(' ', 1)
         if not chan.startswith('#'):
             self.error(IRC.ERR_NOSUCHNICK)
@@ -1360,6 +1511,7 @@ class Client:
         ))
 
     # TODO: Implement this
+    # This should query the profile page info, so blocked by Malicek
     def handle_whois(self, args):
         """Handle WHOIS commands.
 
@@ -1368,10 +1520,14 @@ class Client:
         :param args: [target] <mask>[,<mask>]*
         """
         logger.debug(args)
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     # TODO: Implement this
     def handle_whowas(self, args):
+    # This should query the profile page info, so blocked by Malicek
         """Handle WHOWAS commands.
 
         Not implemented.
@@ -1379,6 +1535,9 @@ class Client:
         :param args: <nick>[,<nick>]* [<count> [<target>]]
         """
         logger.debug(args)
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     def handle_kill(self, args):
@@ -1397,6 +1556,9 @@ class Client:
         :param args: <server> [<server>]
         """
         logger.debug(args)
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         self.reply('PONG {}'.format(
             SERVER,
         ))
@@ -1409,6 +1571,9 @@ class Client:
 
         :param args: <server> [<server>]
         """
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         logger.debug(args)
 
     def handle_error(self, args):
@@ -1421,6 +1586,9 @@ class Client:
 
         :param args: <message>
         """
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
         logger.debug(args)
 
     def handle_away(self, args):
