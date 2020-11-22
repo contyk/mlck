@@ -1222,6 +1222,8 @@ class Client:
         if args:
             only.update(x[1:] for x in args.split(','))
         for room in rooms:
+            if not room['id']:
+                continue
             if only and room['id'] not in only:
                 continue
             self.reply('{} {} = #{} :{}'.format(
