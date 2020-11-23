@@ -21,35 +21,27 @@ import re
 import selectors
 import socket
 import string
+import sys
 import threading
 import time
 import types
 
 import requests
 
-# Server name (config)
-SERVER = 'mlck'
 # Version
 VERSION = '0.1.0'
-# Startup timestamp
-STARTED = time.strftime('%a %b %d %Y at %H:%M:%S UTC', time.gmtime())
-# Refresh in seconds for periodic (config)
-REFRESH = 5
-# IRC messages are pretty short and should fit with all the commands (config)
-BUFFER = 1024
-# Use UTF-8 for all network communication (config)
-ENCODING = 'utf-8'
 # User agent for requests
 AGENT = 'mlck/{}'.format(VERSION)
-
-# Should be configurable
-ENDPOINT = 'https://alik.contyk.dev/api'
-# Timeout for requests
-TIMEOUT = 2.5
+# Startup timestamp
+STARTED = time.strftime('%a %b %d %Y at %H:%M:%S UTC', time.gmtime())
 
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(funcName)s: %(message)s')
 
+# Global config
+config = dict()
+# Global logger
 logger = logging.getLogger(__name__)
+# Global selector
 sel = selectors.DefaultSelector()
 
 class IRC(enum.Enum):
@@ -222,7 +214,6 @@ class Client:
         :returns: A Client instance
         """
         self.socket = sock
-        self.endpoint = None
         self.session = None
         self.user = '*'
         self.password = None
@@ -263,9 +254,6 @@ class Client:
         :returns: True on success, False otherwise
         """
         self.session = requests.Session()
-        self.endpoint = ENDPOINT
-        if self.endpoint.endswith('/'):
-            self.endpoint = self.endpoint[0:-1]
         if self.login():
             self.auto.start()
             return True
@@ -287,7 +275,7 @@ class Client:
 
         :param msg: Byte sequence representing message input
         """
-        msg = msg.decode(ENCODING)
+        msg = msg.decode(config['encoding'])
         pos = msg.find(' ')
         if pos == -1:
             cmd = msg
@@ -418,8 +406,8 @@ class Client:
         """
         logger.debug(msg)
         self.socket.sendall(
-            ':{} '.format(SERVER).encode(ENCODING) + \
-            msg.encode(ENCODING) + \
+            ':{} '.format(config['server']).encode(config['encoding']) + \
+            msg.encode(config['encoding']) + \
             b'\r\n'
         )
 
@@ -464,7 +452,7 @@ class Client:
         ))
 
     # TODO: Handle room errors
-    # TODO: Handle OPER MODEs
+    # TODO: Handle channel modes
     def periodic(self):
         """Automatic periodic check of active channels.
 
@@ -536,7 +524,7 @@ class Client:
                         emoji(msg['message']) if not msg['private'] else '\x02[{}, pst!] {}\x0f'.format(', '.join(msg['private']), emoji(msg['message']))
                     )
             self.lock['channels'].release()
-            time.sleep(REFRESH)
+            time.sleep(config['refresh'])
 
     def keepalive(self, chan):
         """Send a keepalive message.
@@ -616,7 +604,7 @@ class Client:
             self.reply('{} {} :Your host is {}, running version mlck-{}.'.format(
                 IRC.RPL_YOURHOST.value,
                 self.user,
-                SERVER,
+                config['server'],
                 VERSION,
             ))
             self.reply('{} {} :This server was created on {}'.format(
@@ -628,7 +616,7 @@ class Client:
             self.reply('{} {} :{} mlck-{}'.format(
                 IRC.RPL_MYINFO.value,
                 self.user,
-                SERVER,
+                config['server'],
                 VERSION,
             ))
         else:
@@ -655,13 +643,13 @@ class Client:
         response objects.  Callers may check the status code or extract the data
         using the json() method.
 
-        :param resource: API resource, appended to "ENDPOINT/"
+        :param resource: API resource, appended to the endpoint
         :returns: Request response object
         """
         try:
             return self.session.get(
-                '{}/{}'.format(self.endpoint, resource),
-                timeout=TIMEOUT,
+                '{}/{}'.format(config['endpoint'], resource),
+                timeout=config['timeout'],
                 params=params,
                 headers={
                     'User-Agent': AGENT,
@@ -681,14 +669,14 @@ class Client:
         Optionally, a data structure can be passed representing the data to
         send.
 
-        :param resource: API resource, appended to "ENDPOINT/"
+        :param resource: API resource, appended to the endpoint
         :param data: Data to send, if any
         :returns: Request response object
         """
         try:
             return self.session.post(
-                '{}/{}'.format(self.endpoint, resource),
-                timeout=TIMEOUT,
+                '{}/{}'.format(config['endpoint'], resource),
+                timeout=config['timeout'],
                 params=params,
                 json=data,
                 headers={
@@ -764,7 +752,7 @@ class Client:
                 sender,
                 target,
                 message,
-            ).encode(ENCODING) + \
+            ).encode(config['encoding']) + \
             b'\r\n'
         )
 
@@ -791,7 +779,7 @@ class Client:
                 sender,
                 target,
                 message,
-            ).encode(ENCODING) + \
+            ).encode(config['encoding']) + \
             b'\r\n'
         )
 
@@ -816,7 +804,7 @@ class Client:
         self.socket.sendall(':{} JOIN {}'.format(
                 sender,
                 channel,
-            ).encode(ENCODING) + \
+            ).encode(config['encoding']) + \
             b'\r\n'
         )
 
@@ -844,7 +832,7 @@ class Client:
                 sender,
                 channel,
                 msg if msg else '',
-            ).encode(ENCODING) + \
+            ).encode(config['encoding']) + \
             b'\r\n'
         )
 
@@ -863,9 +851,9 @@ class Client:
         logger.debug(message)
         message = message or 'An error is an error.'
         self.socket.sendall(':{} ERROR :{}'.format(
-                SERVER,
+                config['server'],
                 message,
-            ).encode(ENCODING) + \
+            ).encode(config['encoding']) + \
             b'\r\n',
         )
 
@@ -1310,7 +1298,6 @@ class Client:
         pass
 
     # TODO: Handle whispering
-    # TODO: Remember colors per room and use them
     def handle_privmsg(self, args):
         """Handle PRIVMSG commands.
 
@@ -1472,7 +1459,7 @@ class Client:
                         self.user,
                         room['id'],
                         nick['id'],
-                        SERVER,
+                        config['server'],
                         nick['name'],
                         '@' if nick['admin'] else '',
                         '{}, https://alik.cz/u/{}'.format(
@@ -1499,7 +1486,7 @@ class Client:
                     IRC.RPL_WHOREPLY.value,
                     self.user,
                     data['link'],
-                    SERVER,
+                    config['server'],
                     nick,
                     '{}, https://alik.cz/u/{}'.format(
                         data['sex'],
@@ -1562,7 +1549,7 @@ class Client:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
         self.reply('PONG {}'.format(
-            SERVER,
+            config['server'],
         ))
 
     def handle_pong(self, args):
@@ -1687,7 +1674,8 @@ def accept(sock):
 
     :param sock: Listening socket with the pending connection request
     """
-    conn = sock.accept()[0]
+    conn, addr = sock.accept()
+    logger.info('Accepting connection from %s', addr)
     conn.setblocking(False)
     sel.register(
         conn,
@@ -1709,7 +1697,7 @@ def handle(key, mask):
     sock = key.fileobj
     data = key.data
     if mask & selectors.EVENT_READ:
-        recv = sock.recv(BUFFER)
+        recv = sock.recv(config['buffer'])
         if recv:
             data.buf += recv
         else:
@@ -1724,6 +1712,61 @@ def handle(key, mask):
             continue
         break
 
+def load_config(configFile):
+    """Load mlck configuration file.
+
+    Attempts to read the supplied config file and populates the
+    global config, conf.
+
+    :param configFile: Path to the configuration file
+    """
+    global config
+    defaults = {
+        'server': 'mlck',
+        'loglevel': 'INFO',
+        'listen': '127.0.0.1',
+        'port': 6667,
+        'buffer': 1024,
+        'encoding': 'utf-8',
+        'endpoint': 'http://localhost:3000',
+        'refresh': 5,
+        'timeout': 2.5,
+        'color': '#000000',
+    }
+    cnf = configparser.ConfigParser()
+    if not os.path.isfile(configFile):
+        logger.critical('Configuration file "%s" not found.', configFile)
+        sys.exit(1)
+    try:
+        cnf.read(configFile)
+    except:
+        logger.critical('Failed to parse the configuration file.')
+        sys.exit(1)
+    if not cnf.has_section('mlck'):
+        logger.critical('Configuration is missing the mlck section.')
+        sys.exit(1)
+    try:
+        # Strings
+        for opt in ('server', 'loglevel', 'listen', 'encoding', \
+            'endpoint', 'color'):
+            config[opt] = cnf.get('mlck', opt, fallback=defaults[opt])
+        # Ints
+        for opt in ('port', 'buffer'):
+            config[opt] = cnf.getint('mlck', opt, fallback=defaults[opt])
+        # Floats
+        for opt in ('refresh', 'timeout'):
+            config[opt] = cnf.getfloat('mlck', opt, fallback=defaults[opt])
+    except ValueError:
+        logger.critical('Failed parsing the configuration file.')
+        sys.exit(1)
+    loglevel = getattr(logging, config['loglevel'].upper())
+    if not isinstance(loglevel, int):
+        logger.critical('Invalid log level configured.')
+        sys.exit(1)
+    logger.setLevel(loglevel)
+    if config['endpoint'].endswith('/'):
+        config['endpoint'] = config['endpoint'][:-1]
+
 def main():
     """The main body of the application.
 
@@ -1731,14 +1774,28 @@ def main():
 
     Relies on selectors for input.
     """
+    defaultconfig = os.path.join(os.sep, 'etc', 'mlck.conf')
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        '-c', '--config',
+        dest='config',
+        default=defaultconfig,
+        help='mlck configuration file, defaults to {}'.format(defaultconfig),
+    )
+    args = ap.parse_args()
+    load_config(args.config)
     logger.setLevel(logging.DEBUG)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(('0.0.0.0', 6667))
+    sock6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((config['listen'], config['port']))
     sock.listen()
     sock.setblocking(False)
     sel.register(sock, selectors.EVENT_READ, data=None)
-    logger.info('%s, %s starting...', SERVER, AGENT)
+    logger.info('%s, %s starting...', config['server'], AGENT)
+    logger.info('Listening for connections on %s port %s.',
+        config['listen'], config['port'])
     while True:
         events = sel.select(timeout=None)
         for k, m in events:

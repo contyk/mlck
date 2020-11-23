@@ -36,7 +36,18 @@ the timestamps would get mangled.
 
 ## Configuration
 
-Currently hardcoded.  Everything's hardcoded.  Really.
+Configuration is read from `/etc/mlck.conf` by default.  This can be changed
+via the `-c/--config` option.  An example configuration file is part of this
+repository.
+
+Default values are more sensible.  We bind to IPv4 localhost, port 6667.  The
+endpoint is also configured to locahost, Malíček's default port 3000.  The
+default fallback color is black.  The default buffer is 1024 bytes.  The socket
+is configured to expect UTF-8.
+
+The default retry interval is 5 seconds, while the timeout is 2.5.
+
+The default log level is INFO.
 
 ## Commands
 
@@ -323,6 +334,8 @@ mlck requires Python 3, generally 3.4 or later is recommended.
 Nothing besides the standard library is required.
 
 mlck connects to a Malíček endpoint, which needs to be deployed first.
+
+The default configuration file location is `/etc/mlck.conf`.
 
 Once everything is set up, just run it:
 

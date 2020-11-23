@@ -1,0 +1,21 @@
+[mlck]
+# Advertised server name
+server = alik.contyk.dev
+# Log level
+loglevel = debug
+# Address to bind to
+listen = 0.0.0.0
+# Port to bind to
+port = 6667
+# Socket buffer size
+buffer = 1024
+# Socket encoding
+encoding = utf-8
+# Malíček endpoint
+endpoint = https://alik.contyk.dev/api
+# Malíček request timeout in seconds
+timeout = 2.5
+# Malíček refresh interval in seconds
+refresh = 5
+# Default chat color if we fail to fetch the settings
+color = #000000
