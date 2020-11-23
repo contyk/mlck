@@ -1780,8 +1780,17 @@ def main():
         default=defaultconfig,
         help='mlck configuration file, defaults to {}'.format(defaultconfig),
     )
+    ap.add_argument(
+        '-q', '--quiet',
+        dest='quiet',
+        action='store_true',
+        default=False,
+        help='disable all output, regardless of loglevel configuration',
+    )
     args = ap.parse_args()
     load_config(args.config)
+    if args.quiet:
+        logging.disable(logging.CRITICAL)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

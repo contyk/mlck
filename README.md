@@ -341,6 +341,8 @@ Once everything is set up, just run it:
 
 `./mlck`
 
+See `mlck --help` for additional options.
+
 ### License
 
 Petr Šabata <contyk@contyk.dev>, 2020
