@@ -476,8 +476,6 @@ class Client:
                 res = res.json()
                 messages = list()
                 for msg in res['messages']:
-                    if chan not in self.channels:
-                        return
                     if msg == self.channels[chan]['seen']:
                         break
                     messages.append(msg)
@@ -1784,7 +1782,6 @@ def main():
     )
     args = ap.parse_args()
     load_config(args.config)
-    logger.setLevel(logging.DEBUG)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
