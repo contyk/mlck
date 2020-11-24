@@ -329,9 +329,8 @@ Currently unsupported.
 
 ### Deployment
 
-mlck requires Python 3, generally 3.4 or later is recommended.
-
-Nothing besides the standard library is required.
+mlck requires Python 3, generally 3.4 or later is recommended.  You will also
+need the `requests` Python library installed.
 
 mlck connects to a Malíček endpoint, which needs to be deployed first.
 
