@@ -254,6 +254,9 @@ class Client:
         :returns: True on success, False otherwise
         """
         self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': AGENT,
+        })
         if self.login():
             self.auto.start()
             return True
@@ -645,14 +648,13 @@ class Client:
         :returns: Request response object
         """
         try:
-            return self.session.get(
+            response = self.session.get(
                 '{}/{}'.format(config['endpoint'], resource),
                 timeout=config['timeout'],
                 params=params,
-                headers={
-                    'User-Agent': AGENT,
-                },
             )
+            response.encoding = 'utf-8'
+            return response
         except requests.exceptions.Timeout:
             logger.warning('get: timeout while processing %s, params: %s', resource, params)
             return None
@@ -672,15 +674,14 @@ class Client:
         :returns: Request response object
         """
         try:
-            return self.session.post(
+            response = self.session.post(
                 '{}/{}'.format(config['endpoint'], resource),
                 timeout=config['timeout'],
                 params=params,
                 json=data,
-                headers={
-                    'User-Agent': AGENT,
-                },
             )
+            response.encoding = 'utf-8'
+            return response
         except requests.exceptions.Timeout:
             logger.warning('post: timeout while processing %s, params: %s', resource, params)
             return None
