@@ -1607,15 +1607,15 @@ class Client:
         pass
 
 def sanitize(nick):
-    """Sanitize nicks that are not generally acceptable
-    or break the IRC protocol.
+    """Nick substitutions
 
-    Namly this replaces spaces with underscores.
+    Sanitize nicks that are not generally acceptable or break the IRC
+    protocol.  Namely this replaces spaces with non-breakable spaces.
 
     :param nick: The original nickname
     :returns: Modified nickname
     """
-    return nick.replace(' ', '_')
+    return nick.replace('\x20', '\xa0')
 
 def emoji(msg):
     """Replace Alík's emoticons with corresponding emojis.
