@@ -194,17 +194,18 @@ class IRC(enum.Enum):
 class Client:
     """Provides an abstraction of the connection session.
 
-    Instances represent each individual connection, hold its client socket,
-    Malíček session, and various collected metadata.
+    Instances represent each individual connection, hold its client
+    socket, Malíček session, and various collected metadata.
     """
     def __init__(self, sock):
         """Class constructor.
 
-        Initializes instance variables; these include the socket reference,
-        the endpoint, the Malíček session reference, the user nickname, their
-        password, the channels they've joined, information about other nicks
-        they've collected, the automatic periodic thread reference, and thread
-        locks for shared resources.
+        Initializes instance variables; these include the socket
+        reference, the endpoint, the Malíček session reference, the user
+        nickname, their password, the channels they've joined,
+        information about other nicks they've collected, the automatic
+        periodic thread reference, and thread locks for shared
+        resources.
 
         Requires the socket reference.
 
@@ -237,8 +238,8 @@ class Client:
     def __del__(self):
         """Destroys the session instance.
 
-        Attempts to log off, properly destroys the session and clears the
-        Client.periodic() thread.  Called automatically by GC.
+        Attempts to log off, properly destroys the session and clears
+        the Client.periodic() thread.  Called automatically by GC.
         """
         if self.registered():
             self.logout()
@@ -248,8 +249,8 @@ class Client:
     def setup(self):
         """Creates an instance of the session.
 
-        Automatically logs in and maintains the session cookie.  Clears the
-        session upon failure not to confuse Client.registered().
+        Automatically logs in and maintains the session cookie.  Clears
+        the session upon failure not to confuse Client.registered().
 
         :returns: True on success, False otherwise
         """
@@ -268,11 +269,11 @@ class Client:
     def handle(self, msg):
         """Consume messages from the socket.
 
-        The class entry point.  Messages extracted from the socket stream
-        are passed to this method as a byte sequence.
+        The class entry point.  Messages extracted from the socket
+        stream are passed to this method as a byte sequence.
 
-        Decodes the input, splits it into commands and arguments, and directs
-        the data to respective handlers.
+        Decodes the input, splits it into commands and arguments, and
+        directs the data to respective handlers.
 
         Provides very basic checking for sanity.
 
@@ -396,14 +397,15 @@ class Client:
     def reply(self, msg):
         """Send a standard reply in response to a command.
 
-        Only so slightly simplifies sending code responses back to the client.
-        The method only prefixes each message with the server name.
+        Only so slightly simplifies sending code responses back to the
+        client.  The method only prefixes each message with the server
+        name.
 
-        Unfortunately, as each message has a different format, this is the
-        best we can currently offer.
+        Unfortunately, as each message has a different format, this is
+        the best we can currently offer.
 
-        The message must include everything to be sent: the code, the possible
-        arguments, additional human readable messages and more.
+        The message must include everything to be sent: the code, the
+        possible arguments, additional human readable messages and more.
 
         :param msg: The message to send
         """
@@ -417,8 +419,9 @@ class Client:
     def error(self, err, response=None):
         """Send an error reply in response to a command.
 
-        Simplifies error responses.  The response message is optional and
-        standard messages for the given error codes are used, if known.
+        Simplifies error responses.  The response message is optional
+        and standard messages for the given error codes are used, if
+        known.
 
         If not, the default error message is the error code constant.
 
@@ -459,11 +462,12 @@ class Client:
     def periodic(self):
         """Automatic periodic check of active channels.
 
-        Periodically checks all channels the user has joined, querying for
-        new messages, users joining or parting, mode changes and more.
+        Periodically checks all channels the user has joined, querying
+        for new messages, users joining or parting, mode changes and
+        more.
 
-        Triggers relevant IRC actions to simulate the activity.  Maintains
-        presence via keepalive calls, whenever required.
+        Triggers relevant IRC actions to simulate the activity.
+        Maintains presence via keepalive calls, whenever required.
 
         The backbone of mlck.  Runs in an idependent thread.
 
@@ -529,12 +533,13 @@ class Client:
     def keepalive(self, chan):
         """Send a keepalive message.
 
-        Generates a simple, hopefully unique keepalive message and sends it
-        as a broken private message to the channel of choice.
+        Generates a simple, hopefully unique keepalive message and sends
+        it as a broken private message to the channel of choice.
 
         Prevents idling out even when inactive.
 
-        The message takes form of "[ malíček/keepalive <16 bytes of hex> ]".
+        The message takes form of "[ malíček/keepalive <16 bytes of hex>
+        ]".
 
         :param chan: Channel name
         """
@@ -555,13 +560,13 @@ class Client:
     def info(self, nick, uid=None, link=None, sex=None, age=None, oper=None):
         """Handle user information records
 
-        Fetch and, optionally, store user details.  Different handles provide
-        different details we may want to gather over time.
+        Fetch and, optionally, store user details.  Different handles
+        provide different details we may want to gather over time.
 
-        Returns a dictionary of all the data configured for a given nicknames
-        so far.  Keys include uid (the numerical system ID), link (the string
-        form of the ID, sanitized nickname), sex, age and oper (True if the
-        user is a moderator).
+        Returns a dictionary of all the data configured for a given
+        nicknames so far.  Keys include uid (the numerical system ID),
+        link (the string form of the ID, sanitized nickname), sex, age
+        and oper (True if the user is a moderator).
 
         :param nick: Nickname to query or update
         :param uid: Optional, save the numerical uid
@@ -659,9 +664,9 @@ class Client:
     def get(self, resource, params=None):
         """Fetch Malíček resources using GET.
 
-        A simple wrapper for fetching backend resources.  Returns raw request
-        response objects.  Callers may check the status code or extract the data
-        using the json() method.
+        A simple wrapper for fetching backend resources.  Returns raw
+        request response objects.  Callers may check the status code or
+        extract the data using the json() method.
 
         :param resource: API resource, appended to the endpoint
         :returns: Request response object
@@ -680,12 +685,12 @@ class Client:
     def post(self, resource, params=None, data=None):
         """Fetch Malíček resources using POST
 
-        A simple wrapper for fetching backend resources.  Returns raw request
-        response objects.  Callers may check the status code or extract the data
-        using the json() method.
+        A simple wrapper for fetching backend resources.  Returns raw
+        request response objects.  Callers may check the status code or
+        extract the data using the json() method.
 
-        Optionally, a data structure can be passed representing the data to
-        send.
+        Optionally, a data structure can be passed representing the data
+        to send.
 
         :param resource: API resource, appended to the endpoint
         :param data: Data to send, if any
@@ -750,8 +755,8 @@ class Client:
         Sends a PRIVMSG message on behalf of the sender.
 
         The sender is the sender's nickname, which is translated into a
-        virtual username formed from the link ID + @alik.cz.  If the link
-        ID is unavailable, *@alik.cz is used instead.
+        virtual username formed from the link ID + @alik.cz.  If the
+        link ID is unavailable, *@alik.cz is used instead.
 
         In the rare event of sending PART of behalf of *, don't do any
         user mangling.
@@ -777,8 +782,8 @@ class Client:
         Sends a NOTICE message on behalf of the sender.
 
         The sender is the sender's nickname, which is translated into a
-        virtual username formed from the link ID + @alik.cz.  If the link
-        ID is unavailable, *@alik.cz is used instead.
+        virtual username formed from the link ID + @alik.cz.  If the
+        link ID is unavailable, *@alik.cz is used instead.
 
         In the rare event of sending PART of behalf of *, don't do any
         user mangling.
@@ -804,8 +809,8 @@ class Client:
         Sends JOIN to the channel on behalf of the sender.
 
         The sender is the sender's nickname, which is translated into a
-        virtual username formed from the link ID + @alik.cz.  If the link
-        ID is unavailable, *@alik.cz is used instead.
+        virtual username formed from the link ID + @alik.cz.  If the
+        link ID is unavailable, *@alik.cz is used instead.
 
         In the rare event of sending PART of behalf of *, don't do any
         user mangling.
@@ -826,12 +831,12 @@ class Client:
     def do_part(self, sender, channel, msg=None):
         """Send the PART command.
 
-        Sends PART to the channel on behalf of the sender, with an optional
-        parting message.
+        Sends PART to the channel on behalf of the sender, with an
+        optional parting message.
 
         The sender is the sender's nickname, which is translated into a
-        virtual username formed from the link ID + @alik.cz.  If the link
-        ID is unavailable, *@alik.cz is used instead.
+        virtual username formed from the link ID + @alik.cz.  If the
+        link ID is unavailable, *@alik.cz is used instead.
 
         In the rare event of sending PART of behalf of *, don't do any
         user mangling.
@@ -854,8 +859,8 @@ class Client:
     def do_error(self, message=None):
         """Send the ERROR command.
 
-        These are emitted by the server under special circumstances and they
-        always target our only user, self.user.
+        These are emitted by the server under special circumstances and
+        they always target our only user, self.user.
 
         Not to be used for ERR replies.  See Client.error() for those.
 
@@ -875,8 +880,8 @@ class Client:
     def handle_pass(self, args):
         """Handle PASS commands.
 
-        Required for registering a session with us.  This needs to preceed
-        the USER command which itself finishes the registration.
+        Required for registering a session with us.  This needs to
+        preceed the USER command which itself finishes the registration.
 
         :param args: <password>
         """
@@ -890,11 +895,12 @@ class Client:
         """Handle NICK commands.
 
         Set the nickname and use it Alík's username.  It doesn't make
-        sense to change it later as it's your immutable remote identifier.
+        sense to change it later as it's your immutable remote
+        identifier.
 
         Attempts to register the connection.
 
-        :param args: <nickname>
+        :param args: <nick>
         """
         logger.debug(args)
         if not args:
@@ -940,27 +946,28 @@ class Client:
     def handle_mode(self, args):
         """Handle MODE commands.
 
-        Sets user or channel modes.  With no modes, just queries the current
-        modes.
+        Sets user or channel modes.  With no modes, just queries the
+        current modes.
 
         Currently we don't support any modes.
 
-        In theory we could support an extremely limited subset of modes later.
-        These would include:
+        In theory we could support an extremely limited subset of modes
+        later.  These would include:
 
             User mode w: Just our user; receives wallops or not
 
             Channel mode n: Must be a member to message
-            Channel mode o: Query or set the channel operator, if possible
+            Channel mode o: Query or set the channel operator
             Channel mode O: Query the channel creator
             Channel mode t: Must be the channel op to change toppic
 
-        Users could manipulate the user mode 'w' and the channel mode 'o',
-        assuming they're the operator.  They could query the channel mode 'O',
-        but only if they're on that channel due to backend limitations.
+        Users could manipulate the user mode 'w' and the channel mode
+        'o', assuming they're the operator.  They could query the
+        channel mode 'O', but only if they're on that channel due to
+        backend limitations.
 
-        All channels could have the 'n' and 't' modes because that's just
-        our reality.  Question is whether it's useful.
+        All channels could have the 'n' and 't' modes because that's
+        just our reality.  Question is whether it's useful.
 
         :param args: <nick/channel> [<modes> [<params>]]
         """
@@ -972,10 +979,10 @@ class Client:
     def handle_service(self, args):
         """Handle SERVICE commands.
 
-        Services don't make any sense in our context.  Parse the message but
-        refuse to cooperate.
+        Services don't make any sense in our context.  Parse the message
+        but refuse to cooperate.
 
-        :param args: <nickname> <reserved> <dist> <type> <reserved> <info>
+        :param args: <nick> <reserved> <dist> <type> <reserved> <info>
         """
         logger.debug(args)
         if not args or args.count(' ') < 5:
@@ -987,11 +994,13 @@ class Client:
     def handle_quit(self, args):
         """Handle QUIT commands.
 
-        The client is quitting.  Part all the active channels, unregister
-        our selector and close the socket, unless they've already done that.
+        The client is quitting.  Part all the active channels,
+        unregister our selector and close the socket, unless they've
+        already done that.
 
-        Except that we don't do part the channels yet.  It's too early in
-        the development and it could hinder testing with unnecessary spam.
+        Except that we don't do part the channels yet.  It's too early
+        in the development and it could hinder testing with unnecessary
+        spam.
         """
         logger.debug(args)
         sel.unregister(self.socket)
@@ -1005,8 +1014,8 @@ class Client:
         """Handle SQUIT commands.
 
         Used to close server-to-server links.  Makes zero sense in our
-        context.  Parse the message but return a privilege error.  No one
-        is an operator here.
+        context.  Parse the message but return a privilege error.  No
+        one is an operator here.
 
         :param args: <server> <comment>
         """
@@ -1019,11 +1028,11 @@ class Client:
     def handle_join(self, args):
         """Handle JOIN commands.
 
-        Attempts to join the specified channels.  Potential keys are
-        of no use to us so they're ignored.  JOIN must be confirmed
-        upon success.  The client should also receive the channel topic
-        and the list of users, including self.  Additionaly, we also
-        send all visible backlog messages as the '*' user.
+        Attempts to join the specified channels.  Potential keys are of
+        no use to us so they're ignored.  JOIN must be confirmed upon
+        success.  The client should also receive the channel topic and
+        the list of users, including self.  Additionaly, we also send
+        all visible backlog messages as the '*' user.
 
         Joining "0" is an equivalent of parting all the currently joined
         channels.
@@ -1135,12 +1144,12 @@ class Client:
     def handle_part(self, args):
         """Handle PART commands.
 
-        Leaves the selected list of channels.  We do not have to
-        check their presence as the backend doesn't care, although
-        we could potentially cut a few nonsensical requests.
+        Leaves the selected list of channels.  We do not have to check
+        their presence as the backend doesn't care, although we could
+        potentially cut a few nonsensical requests.
 
-        We don't have anywhere to send the parting message so we
-        simply ignore it.
+        We don't have anywhere to send the parting message so we simply
+        ignore it.
 
         :param args: <channel>[,<channel>]*[ :<message>]
         """
@@ -1251,17 +1260,17 @@ class Client:
         """Handle LIST commands.
 
         Queries existing channels.  Lists all channels without
-        arguments, or limits the output to channels that match one
-        of the provided channel names.  These may contain the '*'
-        wildcard, which we translate to '.*' in a regex.
+        arguments, or limits the output to channels that match one of
+        the provided channel names.  These may contain the '*' wildcard,
+        which we translate to '.*' in a regex.
 
         The optional target argument is ignored.
 
-        The output includes the number of users in that channel,
-        as well as its actual name.
+        The output includes the number of users in that channel, as well
+        as its actual name.
 
-        Rooms the user cannot join are not listed as the have no
-        known ID.
+        Rooms the user cannot join are not listed as the have no known
+        ID.
 
         :param args: [<channel>[,<channel>]* [<target>]]
         """
@@ -1315,9 +1324,9 @@ class Client:
     def handle_privmsg(self, args):
         """Handle PRIVMSG commands.
 
-        The standard IRC messaging method, sends commands to channels
-        or users.  Due to Alík's limitations, private messages cannot
-        work outside of channels.  Messaging users is therefore disabled.
+        The standard IRC messaging method, sends commands to channels or
+        users.  Due to Alík's limitations, private messages cannot work
+        outside of channels.  Messaging users is therefore disabled.
 
         Sending messages to channels one hasn't joined is similarly
         impossible and returns an error.
@@ -1418,26 +1427,27 @@ class Client:
         """Handle WHO commands.
 
         RFC 2812 is rather vague and unclear on this topic, however, WHO
-        commands require one or two arguments, the first of which is a mask,
-        the other is optionally the letter 'o'.
+        commands require one or two arguments, the first of which is a
+        mask, the other is optionally the letter 'o'.
 
-        The mask can be both a user mask or a channel mask and may include
-        wildcards.
+        The mask can be both a user mask or a channel mask and may
+        include wildcards.
 
-        We support this, except that if the mask begins with a '#', channel
-        is assumed, user otherwise.  To search for channels beginning with a
-        wildcard, '#*foo' must be requested.
+        We support this, except that if the mask begins with a '#',
+        channel is assumed, user otherwise.  To search for channels
+        beginning with a wildcard, '#*foo' must be requested.
 
         If 'o' is requested, the list returns only operators.
 
-        For channels, we query every matching channel.  For user queries we
-        aggregate the results and return them for channel '*', omitting
-        operator flags.  This seems to be the common practice.
+        For channels, we query every matching channel.  For user queries
+        we aggregate the results and return them for channel '*',
+        omitting operator flags.  This seems to be the common practice.
 
-        The "real name" part is replaced by user details for convenience.
+        The "real name" part is replaced by user details for
+        convenience.
 
-        User mask doesn't match against our virtual hostnames or servers,
-        only IDs, nicknames and details.
+        User mask doesn't match against our virtual hostnames or
+        servers, only IDs, nicknames and details.
 
         Channel queries omit channels the user cannot join as they have
         no visible room IDs.
@@ -1550,9 +1560,9 @@ class Client:
         """Handle PING commands.
 
         Respond with an appropriate PONG.  Since we are a virtual
-        server, we speak for all of them.  In the two argument form,
-        the first argument is the origin, such as the user name or
-        another server, and the other argument is the target.
+        server, we speak for all of them.  In the two argument form, the
+        first argument is the origin, such as the user name or another
+        server, and the other argument is the target.
 
         In a single argument form, only the target is given.
 
@@ -1569,8 +1579,8 @@ class Client:
     def handle_pong(self, args):
         """Handle PONG commands.
 
-        Responses to PINGs.  We don't send any PINGs but it's okay
-        if the client somehow sends these.  Just drop them.
+        Responses to PINGs.  We don't send any PINGs but it's okay if
+        the client somehow sends these.  Just drop them.
 
         :param args: <server> [<server>]
         """
@@ -1622,7 +1632,7 @@ class Client:
         pass
 
 def sanitize(nick):
-    """Nick substitutions
+    """Nick substitutions.
 
     Sanitize nicks that are not generally acceptable or break the IRC
     protocol.  Namely this replaces spaces with non-breakable spaces.
@@ -1634,6 +1644,7 @@ def sanitize(nick):
 
 def emoji(msg):
     """Replace Alík's emoticons with corresponding emojis.
+
     These are not exact match but are close enough.
 
     :param msg: The original message
@@ -1681,8 +1692,8 @@ def emoji(msg):
 def accept(sock):
     """Accept new connections.
 
-    Accepts all incoming connections, configures them as non-blocking and
-    registers them with our master selector.
+    Accepts all incoming connections, configures them as non-blocking
+    and registers them with our master selector.
 
     Creates a buffer and a Client instance for each connection.
 
@@ -1700,10 +1711,11 @@ def accept(sock):
 def handle(key, mask):
     """Handle read evenets from the selector.
 
-    Reads all pending data into a buffer, splitting it by CRLF to generate
-    IRC messages.  These are later passed to Client.handle().
+    Reads all pending data into a buffer, splitting it by CRLF to
+    generate IRC messages.  These are later passed to Client.handle().
 
-    Closes sockets and unregisters them from the selector when appropriate.
+    Closes sockets and unregisters them from the selector when
+    appropriate.
 
     :param key: The selector key object
     :param mask: The selector event mask
@@ -1729,8 +1741,8 @@ def handle(key, mask):
 def load_config(configFile):
     """Load mlck configuration file.
 
-    Attempts to read the supplied config file and populates the
-    global config, conf.
+    Attempts to read the supplied config file and populates the global
+    config, conf.
 
     :param configFile: Path to the configuration file
     """
