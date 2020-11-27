@@ -476,9 +476,8 @@ class Client:
                 res = self.get('rooms/{}'.format(chan[1:]))
                 if not res:
                     continue
-                res = res.json()
                 messages = list()
-                for msg in res['messages']:
+                for msg in res.data['messages']:
                     if msg == self.channels[chan]['seen']:
                         break
                     messages.append(msg)
@@ -490,10 +489,10 @@ class Client:
                     if self.keepalive(chan):
                         self.channels[chan]['activity'] = ctime
                 self.channels[chan]['topic'] = '{}{}'.format(
-                    res['name'],
-                    ' | {}'.format(res['topic']) if res['topic'] else '',
+                    res.data['name'],
+                    ' | {}'.format(res.data['topic']) if res.data['topic'] else '',
                 )
-                for usr in res['users']:
+                for usr in res.data['users']:
                     self.info(
                         usr['name'],
                         uid=usr['id'],
@@ -637,6 +636,26 @@ class Client:
             return True
         return False
 
+    def process_response(self, response):
+        """Distills request responses only to essentials
+
+        We don't need to keep the entire response objects arounds.
+        Basically never.  This method decodes Malíček responses
+        correctly and returns a simple object with code and data
+        properties.
+
+        The code is the original status code and can be checked against
+        requests.code.  The data is decoded JSON.
+
+        :param response: requests response object to process
+        :returns: a simple object with code and data properties
+        """
+        response.encoding = 'utf-8'
+        return types.SimpleNamespace(
+            code=response.status_code,
+            data=response.json(),
+        )
+
     def get(self, resource, params=None):
         """Fetch Malíček resources using GET.
 
@@ -653,8 +672,7 @@ class Client:
                 timeout=config['timeout'],
                 params=params,
             )
-            response.encoding = 'utf-8'
-            return response
+            return self.process_response(response)
         except requests.exceptions.Timeout:
             logger.warning('get: timeout while processing %s, params: %s', resource, params)
             return None
@@ -680,8 +698,7 @@ class Client:
                 params=params,
                 json=data,
             )
-            response.encoding = 'utf-8'
-            return response
+            return self.process_response(response)
         except requests.exceptions.Timeout:
             logger.warning('post: timeout while processing %s, params: %s', resource, params)
             return None
@@ -706,7 +723,7 @@ class Client:
             }
         )
         self.password = None
-        return r and r.status_code == requests.codes.ok
+        return r and r.code == requests.codes.ok
 
     def logout(self):
         """Terminate the Malíček session.
@@ -725,8 +742,7 @@ class Client:
         :returns: Request response
         """
         logger.debug('-')
-        rooms = self.get('rooms')
-        return rooms.json() if rooms else None
+        return self.get('rooms').data or None
 
     def do_privmsg(self, sender, target, message):
         """Send the PRIVMSG command.
@@ -1046,19 +1062,18 @@ class Client:
                     'Cannot join {}, resource is temporarily unavailable.'.format(chan),
                 )
                 continue
-            if res.status_code != 200:
+            if res.code != requests.codes.ok:
                 continue
-            res = res.json()
             settings = self.get(
                 'rooms/{}'.format(chan[1:]),
                 params={
                     'query': 'settings',
             })
-            if not settings:
-                settings = {
-                    'color': '#000000',
-                }
-            for usr in res['users']:
+            if settings:
+                color = settings.data['color']
+            else:
+                color = config['color']
+            for usr in res.data['users']:
                 self.info(
                     usr['name'],
                     uid=usr['id'],
@@ -1069,8 +1084,8 @@ class Client:
                 )
             self.do_join(self.user, chan)
             topic = '{}{}'.format(
-                res['name'],
-                ' | {}'.format(res['topic']) if res['topic'] else '',
+                res.data['name'],
+                ' | {}'.format(res.data['topic']) if res.data['topic'] else '',
             )
             self.reply('{} {} {} :{}'.format(
                 IRC.RPL_TOPIC.value,
@@ -1086,7 +1101,7 @@ class Client:
                     '{}{}'.format(
                         ('@' if x['admin'] else ''),
                         x['name'],
-                    ) for x in res['users']
+                    ) for x in res.data['users']
                 )
             ))
             self.reply('{} {} {} :{}'.format(
@@ -1095,7 +1110,7 @@ class Client:
                 chan,
                 'End of /NAMES list.',
             ))
-            messages = res['messages']
+            messages = res.data['messages']
             messages.reverse()
             for msg in messages:
                 self.do_privmsg(
@@ -1110,7 +1125,7 @@ class Client:
             self.lock['channels'].acquire()
             self.channels[chan] = {
                 'activity': int(time.time()),
-                'color': settings.json()['color'],
+                'color': color,
                 'topic': topic,
             }
             if messages:
@@ -1344,7 +1359,7 @@ class Client:
         else:
             self.error(
                 IRC.ERR_UNAVAILRESOURCE,
-                'Message ({}, {}) not send; resource temporarily unavailable.'.format(
+                'Message ({}, {}) not sent; resource temporarily unavailable.'.format(
                     chan,
                     msg,
                 ),
