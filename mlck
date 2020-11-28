@@ -1482,13 +1482,14 @@ class Client:
                         IRC.RPL_WHOREPLY.value,
                         self.user,
                         room['id'],
-                        nick['id'],
+                        nick['link'],
                         config['server'],
                         nick['name'],
                         '@' if nick['admin'] else '',
-                        '{}, https://alik.cz/u/{}'.format(
+                        '{}, {}, https://alik.cz/u/{}'.format(
+                            nick['age'] or '?',
                             nick['sex'],
-                            nick['id'],
+                            nick['link'],
                         ),
                     ))
         else:
@@ -1498,7 +1499,8 @@ class Client:
                     if len(args) > 1 and args[1] == 'o' and not nick['admin']:
                         continue
                     nicks[nick['name']] = {
-                        'link': nick['id'],
+                        'link': nick['link'],
+                        'age': nick['age'],
                         'sex': nick['sex'],
                     }
             for nick, data in sorted(nicks.items()):
@@ -1512,7 +1514,8 @@ class Client:
                     data['link'],
                     config['server'],
                     nick,
-                    '{}, https://alik.cz/u/{}'.format(
+                    '{}, {}, https://alik.cz/u/{}'.format(
+                        data['age'] or '?',
                         data['sex'],
                         data['link'],
                     ),
