@@ -1255,7 +1255,6 @@ class Client:
                 'End of NAMES list.',
             ))
 
-    # TODO: Add topic to name (blocked by Malicek support)
     def handle_list(self, args):
         """Handle LIST commands.
 
@@ -1307,7 +1306,10 @@ class Client:
                 self.user,
                 room['id'],
                 len(room['users']),
-                room['name'],
+                '{}{}'.format(
+                    room['name'],
+                    ' | {}'.format(room['topic']) if room['topic'] else '',
+                ),
             ))
         self.reply('{} {} :End of LIST'.format(
             IRC.RPL_LISTEND.value,
