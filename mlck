@@ -279,7 +279,16 @@ class Client:
 
         :param msg: Byte sequence representing message input
         """
-        msg = msg.decode(config['encoding'])
+        try:
+            msg = msg.decode(config['encoding'])
+        except ValueError:
+            logger.exception('Failed to decode input: %b', msg)
+            self.do_error(
+                'That does not look like {}, I am confused.'.format(
+                    encoding,
+                ),
+            )
+            return
         pos = msg.find(' ')
         if pos == -1:
             cmd = msg
@@ -1741,6 +1750,16 @@ def handle(key, mask):
             data.buf = data.buf[pos + 2:]
             data.client.handle(cmd)
             continue
+        buflength = len(data.buf)
+        if buflength > config['buffer'] and buflength > 512:
+            logger.error('The client does not seem to be speaking IRC.')
+            logger.error('Closing connection.')
+            data.client.do_error('I only speak IRC, sorry.')
+            sel.unregister(sock)
+            sock.close()
+        if buflength > 512:
+            logger.warning('Client message exceeding 512 bytes.')
+            data.client.do_error('Your message is too long for IRC.')
         break
 
 def load_config(configFile):
