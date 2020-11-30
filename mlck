@@ -1751,15 +1751,15 @@ def handle(key, mask):
             data.client.handle(cmd)
             continue
         buflength = len(data.buf)
-        if buflength > config['buffer'] and buflength > 512:
-            logger.error('The client does not seem to be speaking IRC.')
-            logger.error('Closing connection.')
-            data.client.do_error('I only speak IRC, sorry.')
-            sel.unregister(sock)
-            sock.close()
         if buflength > 512:
             logger.warning('Client message exceeding 512 bytes.')
             data.client.do_error('Your message is too long for IRC.')
+        if buflength >= config['buffer'] and buflength > 512:
+            logger.error('The client does not seem to be speaking IRC.')
+            logger.error('Closing connection.')
+            data.client.do_error('Uh, this seems really wrong.  Buh-bye!')
+            sel.unregister(sock)
+            sock.close()
         break
 
 def load_config(configFile):
