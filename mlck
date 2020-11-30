@@ -29,7 +29,7 @@ import types
 import requests
 
 # Version
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 # User agent for requests
 AGENT = 'mlck/{}'.format(VERSION)
 # Startup timestamp
@@ -515,7 +515,7 @@ class Client:
                         oper=bool(usr['admin']),
                     )
                 for msg in messages:
-                    if msg['nick'] == self.user:
+                    if msg['from'] == self.user:
                         continue
                     if msg['type'] == 'system':
                         if msg['event']['type'] == 'join':
@@ -524,17 +524,24 @@ class Client:
                                 chan,
                             )
                             continue
-                        if msg['event']['type'] == 'part' or msg['event']['type'] == 'kick':
+                        if msg['event']['type'] == 'part' \
+                            or msg['event']['type'] == 'kick':
                             self.do_part(
-                                msg['event']['source'] or msg['event']['target'],
+                                msg['event']['source'] \
+                                    or msg['event']['target'],
                                 chan,
                                 msg['message'],
                             )
                             continue
                     self.do_privmsg(
-                        msg['nick'] if msg['nick'] else '*',
+                        msg['from'] or '*',
                         chan,
-                        emoji(msg['message']) if not msg['private'] else '\x02[{}, pst!] {}\x0f'.format(', '.join(msg['private']), emoji(msg['message']))
+                        emoji(msg['message']) \
+                            if not msg['to'] \
+                            else '\x02[{}, pst!] {}\x0f'.format(
+                                msg['to'],
+                                emoji(msg['message'])
+                            )
                     )
             self.lock['channels'].release()
             time.sleep(config['refresh'])
@@ -554,7 +561,9 @@ class Client:
         """
         logger.debug(chan)
         msg = '[ malíček/keepalive {} ]'.format(
-            str.lower(''.join(random.choice(string.hexdigits) for i in range(16)))
+            str.lower(
+                ''.join(random.choice(string.hexdigits) for i in range(16))
+            )
         )
         return self.post(
             'rooms/{}'.format(chan[1:]),
@@ -688,7 +697,8 @@ class Client:
             )
             return self.process_response(response)
         except requests.exceptions.Timeout:
-            logger.warning('get: timeout while processing %s, params: %s', resource, params)
+            logger.warning('get: timeout while processing %s, params: %s',
+                resource, params)
             return None
 
     def post(self, resource, params=None, data=None):
@@ -714,7 +724,8 @@ class Client:
             )
             return self.process_response(response)
         except requests.exceptions.Timeout:
-            logger.warning('post: timeout while processing %s, params: %s', resource, params)
+            logger.warning('post: timeout while processing %s, params: %s',
+                resource, params)
             return None
 
     def login(self):
@@ -756,7 +767,7 @@ class Client:
         :returns: Request response
         """
         logger.debug('-')
-        return self.get('rooms').data or None
+        return self.get('rooms/').data or None
 
     def do_privmsg(self, sender, target, message):
         """Send the PRIVMSG command.
@@ -776,7 +787,8 @@ class Client:
         """
         logger.debug('%s, %s, %s', sender, target, message)
         if sender != '*':
-            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
+            sender = '{}!{}@alik.cz'.format(sender,
+                self.info(sender)['link'] or '*')
         self.socket.sendall(':{} PRIVMSG {} :{}'.format(
                 sender,
                 target,
@@ -803,7 +815,8 @@ class Client:
         """
         logger.debug('%s, %s, %s', sender, target, message)
         if sender != '*':
-            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
+            sender = '{}!{}@alik.cz'.format(sender,
+                self.info(sender)['link'] or '*')
         self.socket.sendall(':{} NOTICE {} :{}'.format(
                 sender,
                 target,
@@ -829,7 +842,8 @@ class Client:
         """
         logger.debug('%s, %s', sender, channel)
         if sender != '*':
-            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
+            sender = '{}!{}@alik.cz'.format(sender,
+                self.info(sender)['link'] or '*')
         self.socket.sendall(':{} JOIN {}'.format(
                 sender,
                 channel,
@@ -856,7 +870,8 @@ class Client:
         """
         logger.debug('%s, %s, %s', sender, channel, msg)
         if sender != '*':
-            sender = '{}!{}@alik.cz'.format(sender, self.info(sender)['link'] or '*')
+            sender = '{}!{}@alik.cz'.format(sender,
+                self.info(sender)['link'] or '*')
         self.socket.sendall(':{} PART {} :{}'.format(
                 sender,
                 channel,
@@ -1136,7 +1151,7 @@ class Client:
                     chan,
                     '[{}] ({}) {}'.format(
                         msg['time'] if msg['time'] else '??:??:??',
-                        msg['nick'] if msg['nick'] else '*',
+                        msg['from'] if msg['from'] else '*',
                         emoji(msg['message']),
                     ),
                 )
@@ -1433,7 +1448,6 @@ class Client:
     def handle_squery(self, args):
         pass
 
-    # TODO: Age requires a Malicek update
     def handle_who(self, args):
         """Handle WHO commands.
 

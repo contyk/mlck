@@ -12,7 +12,7 @@ buffer = 1024
 # Socket encoding
 encoding = utf-8
 # Malíček endpoint
-endpoint = https://alik.contyk.dev/api
+endpoint = https://alik.contyk.dev
 # Malíček request timeout in seconds
 timeout = 2.5
 # Malíček refresh interval in seconds
