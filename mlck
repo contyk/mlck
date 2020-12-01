@@ -14,6 +14,7 @@ Strives for full RFC 2812 compatibility.
 import argparse
 import configparser
 import enum
+import json
 import logging
 import os
 import random
@@ -219,6 +220,22 @@ class Client:
         self.user = '*'
         self.password = None
         self.userstring = None
+        self.modes = types.SimpleNamespace(
+            # Away
+            a=False,
+            # Invisible
+            i=False,
+            # Server operator
+            o=False,
+            # Local server operator
+            O=False,
+            # Restricted, no nick change
+            r=True,
+            # Receives server notices
+            s=True,
+            # Receives wallops
+            w=True,
+        )
         # Dict of channels we're in
         # Values are another dict, with `seen` and `activity` as keys
         self.channels = dict()
@@ -503,8 +520,13 @@ class Client:
                         self.channels[chan]['activity'] = ctime
                 self.channels[chan]['topic'] = '{}{}'.format(
                     res.data['name'],
-                    ' | {}'.format(res.data['topic']) if res.data['topic'] else '',
+                    ' | {}'.format(res.data['topic']) \
+                        if res.data['topic'] \
+                        else '',
                 )
+                # FIXME: The whole info should probably go
+                #        We only use link and that can be forwarded from
+                #        here, I think...
                 for usr in res.data['users']:
                     self.info(
                         usr['name'],
@@ -524,17 +546,33 @@ class Client:
                                 chan,
                             )
                             continue
-                        if msg['event']['type'] == 'part' \
-                            or msg['event']['type'] == 'kick':
+                        if msg['event']['type'] == 'part':
+                            if msg['event']['source'] \
+                                in self.channels[chan]['operators']:
+                                self.channels[chan]['operators'].remove(
+                                    msg['event']['source']
+                                )
                             self.do_part(
-                                msg['event']['source'] \
-                                    or msg['event']['target'],
+                                msg['event']['source'],
+                                chan,
+                                msg['message'],
+                            )
+                            continue
+                        if msg['event']['type'] == 'kick':
+                            if msg['event']['source'] \
+                                in self.channels[chan]['operators']:
+                                self.channels[chan]['operators'].remove(
+                                    msg['event']['source']
+                                )
+                            self.do_kick(
+                                msg['event']['source'] or config['server'],
+                                msg['event']['target'],
                                 chan,
                                 msg['message'],
                             )
                             continue
                     self.do_privmsg(
-                        msg['from'] or '*',
+                        msg['from'] or config['server'],
                         chan,
                         emoji(msg['message']) \
                             if not msg['to'] \
@@ -543,6 +581,27 @@ class Client:
                                 emoji(msg['message'])
                             )
                     )
+                for usr in res.data['users']:
+                    if not usr['admin'] \
+                        and usr['name'] in self.channels[chan]['operators']:
+                        self.channels[chan]['operators'].remove(usr['name'])
+                        self.do_mode(config['server'], chan,
+                            '-o {}'.format(usr['name']))
+                    elif usr['admin'] \
+                        and usr['name'] not in self.channels[chan]['operators']:
+                        self.channels[chan]['operators'].add(usr['name'])
+                        self.do_mode(config['server'], chan,
+                            '+o {}'.format(usr['name']))
+                if res.data['allowed'] != self.channels[chan]['allowed']:
+                    self.channels[chan]['allowed'] = res.data['allowed']
+                    if res.data['allowed'] == 'all':
+                        self.do_mode(config['server'], chan, '-iI')
+                    elif res.data['allowed'] == 'none':
+                        self.do_mode(config['server'], chan, '+i -I')
+                    else:
+                        self.do_mode(config['server'], chan, '+iI {}'.format(
+                            res.data['allowed']))
+                    pass
             self.lock['channels'].release()
             time.sleep(config['refresh'])
 
@@ -635,8 +694,7 @@ class Client:
                 self.user,
                 STARTED,
             ))
-            # TODO: Advertise modes once we support them
-            self.reply('{} {} :{} mlck-{}'.format(
+            self.reply('{} {} :{} mlck-{} aioOrsw biInto'.format(
                 IRC.RPL_MYINFO.value,
                 self.user,
                 config['server'],
@@ -674,9 +732,16 @@ class Client:
         :returns: a simple object with code and data properties
         """
         response.encoding = 'utf-8'
+        try:
+            data = response.json()
+        except json.decoder.JSONDecodeError:
+            data = None
+        except Exception:
+            logger.exception('Failed handling Malicek response')
         return types.SimpleNamespace(
             code=response.status_code,
-            data=response.json(),
+            headers=response.headers,
+            data=data,
         )
 
     def get(self, resource, params=None):
@@ -769,6 +834,26 @@ class Client:
         logger.debug('-')
         return self.get('rooms/').data or None
 
+    def do_mode(self, who, chan, modes):
+        """Send the MODE command.
+
+        ...
+        :param who: Who's changing the mode, typically *
+        :param chan: The affected channel
+        :param modes: Full modes, including arguments and +/-
+        """
+        logger.debug('{}, {}, {}', who, chan, modes)
+        if who != config['server']:
+            # FIXME: Should handle those.
+            pass
+        self.socket.sendall(':{} MODE {} {}'.format(
+                who,
+                chan,
+                modes,
+            ).encode(config['encoding']) + \
+            b'\r\n'
+        )
+
     def do_privmsg(self, sender, target, message):
         """Send the PRIVMSG command.
 
@@ -786,7 +871,7 @@ class Client:
         :param message: The message to send
         """
         logger.debug('%s, %s, %s', sender, target, message)
-        if sender != '*':
+        if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
                 self.info(sender)['link'] or '*')
         self.socket.sendall(':{} PRIVMSG {} :{}'.format(
@@ -814,7 +899,7 @@ class Client:
         :param message: The message to send
         """
         logger.debug('%s, %s, %s', sender, target, message)
-        if sender != '*':
+        if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
                 self.info(sender)['link'] or '*')
         self.socket.sendall(':{} NOTICE {} :{}'.format(
@@ -841,7 +926,7 @@ class Client:
         :param channel: The channel they are joining
         """
         logger.debug('%s, %s', sender, channel)
-        if sender != '*':
+        if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
                 self.info(sender)['link'] or '*')
         self.socket.sendall(':{} JOIN {}'.format(
@@ -869,13 +954,36 @@ class Client:
         :param msg: Optional parting message
         """
         logger.debug('%s, %s, %s', sender, channel, msg)
-        if sender != '*':
+        if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
                 self.info(sender)['link'] or '*')
         self.socket.sendall(':{} PART {} :{}'.format(
                 sender,
                 channel,
-                msg if msg else '',
+                msg or '',
+            ).encode(config['encoding']) + \
+            b'\r\n'
+        )
+
+    def do_kick(self, who, whom, chan, msg):
+        """Send the KICK command.
+
+        ...
+
+        :param who: Who is doing the kicking
+        :param whom: Who is being kicked out
+        :param chan: What channel is this happening on
+        :param msg: Kick message
+        """
+        logger.debug('%s, %s, %s, %s', who, whom, chan, msg)
+        if who != config['server']:
+            who = '{}!{}@alik.cz'.format(who,
+                self.info(who)['link'] or '*')
+        self.socket.sendall(':{} KICK {} {} :{}'.format(
+                who,
+                chan,
+                whom,
+                msg,
             ).encode(config['encoding']) + \
             b'\r\n'
         )
@@ -1056,7 +1164,7 @@ class Client:
         no use to us so they're ignored.  JOIN must be confirmed upon
         success.  The client should also receive the channel topic and
         the list of users, including self.  Additionaly, we also send
-        all visible backlog messages as the '*' user.
+        all visible backlog messages as the server user.
 
         Joining "0" is an equivalent of parting all the currently joined
         channels.
@@ -1106,6 +1214,7 @@ class Client:
                 color = settings.data['color']
             else:
                 color = config['color']
+            operators = set()
             for usr in res.data['users']:
                 self.info(
                     usr['name'],
@@ -1115,6 +1224,8 @@ class Client:
                     age=usr['age'],
                     oper=bool(usr['admin']),
                 )
+                if usr['admin']:
+                    operators.add(usr['name'])
             self.do_join(self.user, chan)
             topic = '{}{}'.format(
                 res.data['name'],
@@ -1143,15 +1254,26 @@ class Client:
                 chan,
                 'End of /NAMES list.',
             ))
+            # No external messages, only chanops change topics
+            self.do_mode(config['server'], chan, '+nt')
+            if res.data['allowed'] != 'all':
+                if res.data['allowed'] == 'none':
+                    # Invite only, for no one
+                    self.do_mode(config['server'], chan, '+i')
+                else:
+                    # Invite only for the "allowed"
+                    self.do_mode(config['server'], chan, '+iI {}'.format(
+                        res.data['allowed'])
+                    )
             messages = res.data['messages']
             messages.reverse()
             for msg in messages:
                 self.do_privmsg(
-                    '*',
+                    config['server'],
                     chan,
-                    '[{}] ({}) {}'.format(
-                        msg['time'] if msg['time'] else '??:??:??',
-                        msg['from'] if msg['from'] else '*',
+                    '@{} {}: {}'.format(
+                        msg['time'] or '??:??:??',
+                        msg['from'] or config['server'],
                         emoji(msg['message']),
                     ),
                 )
@@ -1160,6 +1282,8 @@ class Client:
                 'activity': int(time.time()),
                 'color': color,
                 'topic': topic,
+                'operators': operators,
+                'allowed': res.data['allowed'],
             }
             if messages:
                 self.channels[chan]['seen'] = messages[-1]
@@ -1232,6 +1356,7 @@ class Client:
             ))
         self.lock['channels'].release()
 
+    # FIXME: Should we update operators here?
     def handle_names(self, args):
         """Handle NAMES commands.
 
@@ -1378,6 +1503,7 @@ class Client:
             self.error(IRC.ERR_CANNOTSENDTOCHAN)
             return
         msg = msg[1:]
+        # FIXME: Strip color codes elsewhere and check just ACTION
         if msg.startswith('\x01') and msg.endswith('\x01'):
             msg = msg.replace('\x01ACTION ', '*')
             msg = msg.replace('\x01', '*')
@@ -1448,6 +1574,7 @@ class Client:
     def handle_squery(self, args):
         pass
 
+    # FIXME: Should we update operators here?
     def handle_who(self, args):
         """Handle WHO commands.
 
