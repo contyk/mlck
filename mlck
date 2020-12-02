@@ -1291,7 +1291,7 @@ class Client:
                 topic=topic,
             )
             self.reply(
-                msg='{code} {user} = {chanel} :{names}',
+                msg='{code} {user} = {channel} :{names}',
                 code=IRC.RPL_NAMEREPLY,
                 channel=chan,
                 names=[
