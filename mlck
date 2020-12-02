@@ -852,7 +852,15 @@ class Client:
         :returns: Request response
         """
         logger.debug('-')
-        return self.get('rooms/').data or None
+        rooms = self.get('rooms/')
+        if rooms:
+            cache.links.update({
+                u['name']: u['link'] \
+                for r in rooms.data \
+                for u in r['users']
+            })
+            return rooms.data
+        return None
 
     def do_mode(self, who, chan, modes):
         """Send the MODE command.
