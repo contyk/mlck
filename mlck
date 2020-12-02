@@ -45,6 +45,12 @@ logger = logging.getLogger(__name__)
 # Global selector
 sel = selectors.DefaultSelector()
 
+# Caching user IDs for use in system messages
+cache = types.SimpleNamespace(
+    ids=dict(),
+    links=dict()
+)
+
 class IRC(enum.Enum):
     """Provides IRC response code mappings.
 
@@ -582,18 +588,11 @@ class Client:
                         if res.data['topic'] \
                         else '',
                 )
-                # FIXME: The whole info should probably go
-                #        We only use link and that can be forwarded from
-                #        here, I think...
                 for usr in res.data['users']:
-                    self.info(
-                        usr['name'],
-                        uid=usr['id'],
-                        link=usr['link'],
-                        sex=usr['sex'],
-                        age=usr['age'],
-                        oper=bool(usr['admin']),
-                    )
+                    if usr['name'] not in cache.ids and usr['id']:
+                        cache.ids[usr['name']] = usr['id']
+                    if usr['name'] not in cache.links and usr['link']:
+                        cache.links[usr['name']] = usr['link']
                 for msg in messages:
                     if msg['from'] == self.user:
                         continue
@@ -691,42 +690,6 @@ class Client:
                 'color': self.channels[chan]['color'],
             },
         )
-
-    def info(self, nick, uid=None, link=None, sex=None, age=None, oper=None):
-        """Handle user information records
-
-        Fetch and, optionally, store user details.  Different handles
-        provide different details we may want to gather over time.
-
-        Returns a dictionary of all the data configured for a given
-        nicknames so far.  Keys include uid (the numerical system ID),
-        link (the string form of the ID, sanitized nickname), sex, age
-        and oper (True if the user is a moderator).
-
-        :param nick: Nickname to query or update
-        :param uid: Optional, save the numerical uid
-        :param link: Optional, save the string id
-        :param sex: Optional, save the sex
-        :param age: Optional, save age
-        :param oper: Optional, save the operator status
-        :returns: A dictionary of all stored values
-        """
-        with self.lock['nicks']:
-            if nick not in self.nicks:
-                self.nicks[nick] = {
-                    x: None for x in ('uid', 'link', 'sex', 'age', 'oper')
-                }
-            if uid:
-                self.nicks[nick]['uid'] = uid
-            if link:
-                self.nicks[nick]['link'] = link
-            if sex:
-                self.nicks[nick]['sex'] = sex
-            if age:
-                self.nicks[nick]['age'] = age
-            if oper:
-                self.nicks[nick]['oper'] = oper
-            return self.nicks[nick]
 
     def register(self):
         """Register a connection.
@@ -929,7 +892,7 @@ class Client:
         logger.debug('%s, %s, %s', sender, target, message)
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
-                self.info(sender)['link'] or '*')
+                cache.links[sender] or '*')
         self.send(
             msg=':{user} PRIVMSG {target} :{message}',
             user=sender,
@@ -956,7 +919,7 @@ class Client:
         logger.debug('%s, %s, %s', sender, target, message)
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
-                self.info(sender)['link'] or '*')
+                cache.links[sender] or '*')
         self.send(
             msg=':{user} NOTICE {target} :{message}',
             user=sender,
@@ -982,7 +945,7 @@ class Client:
         logger.debug('%s, %s', sender, channel)
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
-                self.info(sender)['link'] or '*')
+                cache.links[sender] or '*')
         self.send(
             msg=':{user} JOIN {channel}',
             user=sender,
@@ -1009,7 +972,7 @@ class Client:
         logger.debug('%s, %s, %s', sender, channel, msg)
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
-                self.info(sender)['link'] or '*')
+                cache.links[sender] or '*')
         self.send(
             msg=':{user} PART {channel} :{message}',
             user=sender,
@@ -1030,7 +993,7 @@ class Client:
         logger.debug('%s, %s, %s, %s', who, whom, chan, msg)
         if who != config['server']:
             who = '{}!{}@alik.cz'.format(who,
-                self.info(who)['link'] or '*')
+                cache.links[sender] or '*')
         self.send(
             msg=':{user} KICK {channel} {names} :{message}',
             user=who,
@@ -1269,14 +1232,10 @@ class Client:
                 color = config['color']
             operators = set()
             for usr in res.data['users']:
-                self.info(
-                    usr['name'],
-                    uid=usr['id'],
-                    link=usr['link'],
-                    sex=usr['sex'],
-                    age=usr['age'],
-                    oper=bool(usr['admin']),
-                )
+                if usr['name'] not in cache.ids and usr['id']:
+                    cache.ids[usr['name']] = usr['id']
+                if usr['name'] not in cache.links and usr['link']:
+                    cache.links[usr['name']] = usr['link']
                 if usr['admin']:
                     operators.add(usr['name'])
             self.do_join(self.user, chan)
