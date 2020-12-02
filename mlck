@@ -420,7 +420,57 @@ class Client:
             self.error(IRC.ERR_UNKNOWNCOMMAND)
             logger.warning('Unknown command: %s, args: %s', cmd, args)
 
-    def reply(self, msg):
+    def send(self, msg, server=None, user=None, names=None, sep=' ', **kwargs):
+        """Send a formatted message to our socket.
+
+        This is the only point through which all other methods should
+        send their messages.  Accepts the message string that will be
+        formatted with **kwargs.
+
+        If a user's nickname is to be included in the message, it should
+        be passed as 'user'.  This is typically the sender or the
+        recipient of the message.
+
+        If any other nicknames are to be included, they should be listed
+        in the 'names' list.  The list will be sanitized and joined with
+        'sep', which is a space by default.
+
+        If the server name is to be included, it should be passed as
+        'server'.
+
+        If the user is ommitted, it defaults to the session user's name.
+
+        If the server is omitted, it defaults to the mlck server name.
+
+        Finally, {server}, {user} and {names} are substituted in the
+        message.
+
+        :param msg: The message to be formatted
+        :param server: Server name, sanitized
+        :param user: User name to sanitize, typically the user's own
+        :param names: A list of other names to be sanitized
+        :param sep: The names separator in the joined string
+        :param **kwargs: Keyword arguments for formatting
+        """
+        if not user:
+            user = self.user
+        user = ircencode(user)
+        if not server:
+            server = config['server']
+        server = ircencode(server)
+        if names:
+            names = sep.join(map(ircencode, names))
+        self.socket.sendall(
+            msg.format(
+                server=server,
+                user=user,
+                names=names,
+                **kwargs,
+            ).encode(config['encoding']) + \
+            b'\r\n',
+        )
+
+    def reply(self, msg, code=None, **kwargs):
         """Send a standard reply in response to a command.
 
         Only so slightly simplifies sending code responses back to the
@@ -434,15 +484,21 @@ class Client:
         possible arguments, additional human readable messages and more.
 
         :param msg: The message to send
+        :param code: IRC response code enum
+        :param **kwargs: Additional formatting keywords
         """
         logger.debug(msg)
-        self.socket.sendall(
-            ':{} '.format(config['server']).encode(config['encoding']) + \
-            msg.encode(config['encoding']) + \
-            b'\r\n'
+        if code:
+            code = code.value
+        self.send(
+            ':{{server}} {msg}'.format(
+                msg=msg,
+            ),
+            code=code,
+            **kwargs,
         )
 
-    def error(self, err, response=None):
+    def error(self, code, response=None, **kwargs):
         """Send an error reply in response to a command.
 
         Simplifies error responses.  The response message is optional
@@ -456,32 +512,34 @@ class Client:
 
         :param err: The error code, an enum of the IRC class
         :param response: Optional error message
+        :param kwargs: Additional formatting keywords
         """
-        logger.debug('%s, %s', err, response)
-        if err == IRC.ERR_NEEDMOREPARAMS:
+        logger.debug('%s, %s', code, response)
+        if code == IRC.ERR_NEEDMOREPARAMS:
             response = response or 'Not enough parameters given.'
-        elif err == IRC.ERR_UNKNOWNCOMMAND:
+        elif code == IRC.ERR_UNKNOWNCOMMAND:
             response = response or 'Command not implemented.'
-        elif err == IRC.ERR_PASSWDMISMATCH:
+        elif code == IRC.ERR_PASSWDMISMATCH:
             response = response or 'Authentication failed, sorry.'
-        elif err == IRC.ERR_ALREADYREGISTERED:
+        elif code == IRC.ERR_ALREADYREGISTERED:
             response = response or 'You are already logged in.'
-        elif err == IRC.ERR_NOTREGISTERED:
+        elif code == IRC.ERR_NOTREGISTERED:
             response = response or 'You must log in to continue.'
-        elif err == IRC.ERR_NOSUCHNICK:
+        elif code == IRC.ERR_NOSUCHNICK:
             respose = respose or 'Private messaging is unsupported.'
-        elif err == IRC.ERR_NOTEXTTOSEND:
+        elif code == IRC.ERR_NOTEXTTOSEND:
             response = response or 'No message specified.'
-        elif err in (IRC.ERR_CANNOTSENDTOCHAN, IRC.ERR_NOTONCHANNEL):
+        elif code in (IRC.ERR_CANNOTSENDTOCHAN, IRC.ERR_NOTONCHANNEL):
             response = response or 'You must join the channel first.'
-        elif err == IRC.ERR_NOPRIVILEGES:
+        elif code == IRC.ERR_NOPRIVILEGES:
             response = response or 'You are not allowed to do that here.'
-        response = response or err
-        self.reply('{} {} :{}'.format(
-            err.value,
-            self.user,
-            response,
-        ))
+        response = response or code
+        self.reply(
+            msg='{code} {user} {response}',
+            code=code,
+            response=response,
+            **kwargs,
+        )
 
     # TODO: Handle room errors
     # TODO: Handle channel modes
@@ -679,27 +737,26 @@ class Client:
         if self.user == '*' or not self.password or not self.userstring:
             return
         if self.setup():
-            self.reply('{} {} :Welcome to Malíček.'.format(
-                IRC.RPL_WELCOME.value,
-                self.user,
-            ))
-            self.reply('{} {} :Your host is {}, running version mlck-{}.'.format(
-                IRC.RPL_YOURHOST.value,
-                self.user,
-                config['server'],
-                VERSION,
-            ))
-            self.reply('{} {} :This server was created on {}'.format(
-                IRC.RPL_CREATED.value,
-                self.user,
-                STARTED,
-            ))
-            self.reply('{} {} :{} mlck-{} aioOrsw biInto'.format(
-                IRC.RPL_MYINFO.value,
-                self.user,
-                config['server'],
-                VERSION,
-            ))
+            self.reply(
+                msg='{code} {user} :Welcome to Malíček',
+                code=IRC.RPL_WELCOME,
+            )
+            self.reply(
+                msg=('{code} {user} :Your host is {server}, '
+                    'running version mlck-{version}.'),
+                code=IRC.RPL_YOURHOST,
+                version=VERSION,
+            )
+            self.reply(
+                msg='{code} {user} :This server was created on {when}',
+                code=IRC.RPL_CREATED,
+                when=STARTED,
+            )
+            self.reply(
+                msg='{code} {user} :{server} mlck-{version} aioOrsw biInto',
+                code=IRC.RPL_MYINFO,
+                version=VERSION,
+            )
         else:
             self.error(IRC.ERR_PASSWDMISMATCH)
             sel.unregister(self.socket)
@@ -846,12 +903,11 @@ class Client:
         if who != config['server']:
             # FIXME: Should handle those.
             pass
-        self.socket.sendall(':{} MODE {} {}'.format(
-                who,
-                chan,
-                modes,
-            ).encode(config['encoding']) + \
-            b'\r\n'
+        self.send(
+            ':{user} MODE {channel} {modes}',
+            user=who,
+            channel=chan,
+            modes=modes,
         )
 
     def do_privmsg(self, sender, target, message):
@@ -874,12 +930,11 @@ class Client:
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
                 self.info(sender)['link'] or '*')
-        self.socket.sendall(':{} PRIVMSG {} :{}'.format(
-                sender,
-                target,
-                message,
-            ).encode(config['encoding']) + \
-            b'\r\n'
+        self.send(
+            msg=':{user} PRIVMSG {target} :{message}',
+            user=sender,
+            target=target,
+            message=message,
         )
 
     def do_notice(self, sender, target, message):
@@ -902,12 +957,11 @@ class Client:
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
                 self.info(sender)['link'] or '*')
-        self.socket.sendall(':{} NOTICE {} :{}'.format(
-                sender,
-                target,
-                message,
-            ).encode(config['encoding']) + \
-            b'\r\n'
+        self.send(
+            msg=':{user} NOTICE {target} :{message}',
+            user=sender,
+            target=target,
+            message=message,
         )
 
     def do_join(self, sender, channel):
@@ -929,11 +983,10 @@ class Client:
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
                 self.info(sender)['link'] or '*')
-        self.socket.sendall(':{} JOIN {}'.format(
-                sender,
-                channel,
-            ).encode(config['encoding']) + \
-            b'\r\n'
+        self.send(
+            msg=':{user} JOIN {channel}',
+            user=sender,
+            channel=channel,
         )
 
     def do_part(self, sender, channel, msg=None):
@@ -957,12 +1010,11 @@ class Client:
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
                 self.info(sender)['link'] or '*')
-        self.socket.sendall(':{} PART {} :{}'.format(
-                sender,
-                channel,
-                msg or '',
-            ).encode(config['encoding']) + \
-            b'\r\n'
+        self.send(
+            msg=':{user} PART {channel} :{message}',
+            user=sender,
+            channel=channel,
+            message=msg or '',
         )
 
     def do_kick(self, who, whom, chan, msg):
@@ -979,13 +1031,12 @@ class Client:
         if who != config['server']:
             who = '{}!{}@alik.cz'.format(who,
                 self.info(who)['link'] or '*')
-        self.socket.sendall(':{} KICK {} {} :{}'.format(
-                who,
-                chan,
-                whom,
-                msg,
-            ).encode(config['encoding']) + \
-            b'\r\n'
+        self.send(
+            msg=':{user} KICK {channel} {names} :{message}',
+            user=who,
+            channel=chan,
+            names=(whom,),
+            message=msg,
         )
 
     def do_error(self, message=None):
@@ -1002,11 +1053,9 @@ class Client:
         """
         logger.debug(message)
         message = message or 'An error is an error.'
-        self.socket.sendall(':{} ERROR :{}'.format(
-                config['server'],
-                message,
-            ).encode(config['encoding']) + \
-            b'\r\n',
+        self.send(
+            msg=':{server} ERROR :{message}',
+            message=message,
         )
 
     def handle_pass(self, args):
@@ -1191,7 +1240,9 @@ class Client:
                 else:
                     self.error(
                         IRC.ERR_UNAVAILRESOURCE,
-                        'Cannot leave {}, resource is temporarily unavailable.'.format(chan),
+                        response=('Cannot leave {channel}, '
+                        'resource is temporarily unavailable.'),
+                        channel=chan,
                     )
             self.lock['channels'].release()
             return
@@ -1200,7 +1251,9 @@ class Client:
             if not res:
                 self.error(
                     IRC.ERR_UNAVAILRESOURCE,
-                    'Cannot join {}, resource is temporarily unavailable.'.format(chan),
+                    response=('Cannot join {channel}, '
+                    'resource is temporarily unavailable.'),
+                    channel=chan,
                 )
                 continue
             if res.code != requests.codes.ok:
@@ -1231,29 +1284,28 @@ class Client:
                 res.data['name'],
                 ' | {}'.format(res.data['topic']) if res.data['topic'] else '',
             )
-            self.reply('{} {} {} :{}'.format(
-                IRC.RPL_TOPIC.value,
-                self.user,
-                chan,
-                topic,
-            ))
-            self.reply('{} {} = {} :{}'.format(
-                IRC.RPL_NAMEREPLY.value,
-                self.user,
-                chan,
-                ' '.join(
+            self.reply(
+                msg='{code} {user} {channel} :{topic}',
+                code=IRC.RPL_TOPIC,
+                channel=chan,
+                topic=topic,
+            )
+            self.reply(
+                msg='{code} {user} = {chanel} :{names}',
+                code=IRC.RPL_NAMEREPLY,
+                channel=chan,
+                names=[
                     '{}{}'.format(
                         ('@' if x['admin'] else ''),
                         x['name'],
                     ) for x in res.data['users']
-                )
-            ))
-            self.reply('{} {} {} :{}'.format(
-                IRC.RPL_ENDOFNAMES.value,
-                self.user,
-                chan,
-                'End of /NAMES list.',
-            ))
+                ],
+            )
+            self.reply(
+                msg='{code} {user} {channel} :End of NAMES list.',
+                code=IRC.RPL_ENDOFNAMES,
+                channel=chan,
+            )
             # No external messages, only chanops change topics
             self.do_mode(config['server'], chan, '+nt')
             if res.data['allowed'] != 'all':
@@ -1318,7 +1370,9 @@ class Client:
             else:
                 self.error(
                     IRC.ERR_UNAVAILRESOURCE,
-                    'Cannot leave {}, resource is temporarily unavailable.'.format(chan),
+                    response=('Cannot leave {channel}, '
+                    'resource is temporarily unavailable.'),
+                    channel=chan,
                 )
             self.lock['channels'].release()
 
@@ -1348,12 +1402,12 @@ class Client:
         if not args in self.channels:
             self.error(IRC.ERR_NOTONCHANNEL)
         else:
-            self.reply('{} {} {} :{}'.format(
-                IRC.RPL_TOPIC.value,
-                self.user,
-                args,
-                self.channels[args]['topic'],
-            ))
+            self.reply(
+                msg='{code} {user} {channel} :{topic}',
+                code=IRC.RPL_TOPIC,
+                channel=args,
+                topic=self.channels[args]['topic'],
+            )
         self.lock['channels'].release()
 
     # FIXME: Should we update operators here?
@@ -1375,7 +1429,8 @@ class Client:
         if not rooms:
             self.error(
                 IRC.ERR_UNAVAILRESOURCE,
-                'Cannot fetch names, resource temporarily unavailable.',
+                response=('Cannot fetch names, '
+                'resource temporarily unavailable.'),
             )
             return
         only = set()
@@ -1386,23 +1441,22 @@ class Client:
                 continue
             if only and room['id'] not in only:
                 continue
-            self.reply('{} {} = #{} :{}'.format(
-                IRC.RPL_NAMEREPLY.value,
-                self.user,
-                room['id'],
-                ' '.join(
+            self.reply(
+                msg='{code} {user} = #{channel} :{names}',
+                code=IRC.RPL_NAMEREPLY,
+                channel=room['id'],
+                names=[
                     '{}{}'.format(
                         ('@' if x['admin'] else ''),
                         x['name'],
                     ) for x in room['users']
-                ),
-            ))
-            self.reply('{} {} #{} :{}'.format(
-                IRC.RPL_ENDOFNAMES.value,
-                self.user,
-                room['id'],
-                'End of NAMES list.',
-            ))
+                ],
+            )
+            self.reply(
+                msg='{code} {user} #{channel} :End of NAMES list.',
+                code=IRC.RPL_ENDOFNAMES,
+                channel=room['id'],
+            )
 
     def handle_list(self, args):
         """Handle LIST commands.
@@ -1435,7 +1489,8 @@ class Client:
         if not rooms:
             self.error(
                 IRC.ERR_UNAVAILRESOURCE,
-                'Cannot process rooms, resource is temporarily unavailable.',
+                response=('Cannot process rooms, '
+                'resource is temporarily unavailable.'),
             )
             return
         for room in rooms:
@@ -1450,20 +1505,20 @@ class Client:
                 show = False
             if not show:
                 continue
-            self.reply('{} {} #{} {} :{}'.format(
-                IRC.RPL_LIST.value,
-                self.user,
-                room['id'],
-                len(room['users']),
-                '{}{}'.format(
+            self.reply(
+                msg='{code} {user} #{channel} {number} :{topic}',
+                code=IRC.RPL_LIST,
+                channel=room['id'],
+                number=len(room['users']),
+                topic='{}{}'.format(
                     room['name'],
                     ' | {}'.format(room['topic']) if room['topic'] else '',
                 ),
-            ))
-        self.reply('{} {} :End of LIST'.format(
-            IRC.RPL_LISTEND.value,
-            self.user,
-        ))
+            )
+        self.reply(
+            msg='{code} {user} :End of LIST',
+            code=IRC.RPL_LISTEND,
+        )
 
     def handle_invite(self, args):
         pass
@@ -1512,7 +1567,7 @@ class Client:
                 data={
                     'action': 'post',
                     'to': 0,
-                    'message': msg,
+                    'message': ircdecode(msg),
                     'color': self.channels[chan]['color'],
                 },
             ):
@@ -1520,13 +1575,14 @@ class Client:
         else:
             self.error(
                 IRC.ERR_UNAVAILRESOURCE,
-                'Message ({}, {}) not sent; resource temporarily unavailable.'.format(
-                    chan,
-                    msg,
-                ),
+                response=('Message ({channel}, {message}) not sent; '
+                'resource temporarily unavailable.'),
+                channel=chan,
+                message=msg,
             )
         self.lock['channels'].release()
 
+    # FIXME: Don't send messages; use this for reporting misdemeanor
     def handle_notice(self, args):
         """Handle NOTICE commands.
 
@@ -1612,7 +1668,8 @@ class Client:
         if not rooms:
             self.error(
                 IRC.ERR_UNAVAILRESOURCE,
-                'Cannot list users, resource is temporarily unavailable.',
+                response=('Cannot list users, ',
+                'resource is temporarily unavailable.'),
             )
             return
         args = args.split(' ')
@@ -1630,20 +1687,20 @@ class Client:
                 for nick in room['users']:
                     if len(args) > 1 and args[1] == 'o' and not nick['admin']:
                         continue
-                    self.reply('{} {} #{} {} alik.cz {} {} H{} :0 {}'.format(
-                        IRC.RPL_WHOREPLY.value,
-                        self.user,
-                        room['id'],
-                        nick['link'],
-                        config['server'],
-                        nick['name'],
-                        '@' if nick['admin'] else '',
-                        '{}, {}, https://alik.cz/u/{}'.format(
+                    self.reply(
+                        msg=('{code} {user} #{channel} {link} alik.cz '
+                        '{server} {names} H{op} :0 {description}'),
+                        code=IRC.RPL_WHOREPLY,
+                        channel=room['id'],
+                        link=nick['link'],
+                        names=(nick['name'],),
+                        op='@' if nick['admin'] else '',
+                        description='{}, {}, https://alik.cz/u/{}'.format(
                             nick['age'] or '?',
                             nick['sex'],
                             nick['link'],
                         ),
-                    ))
+                    )
         else:
             nicks = dict()
             for room in rooms:
@@ -1660,23 +1717,23 @@ class Client:
                     not mask.match(data['link']) and \
                     not mask.match(data['sex']):
                     continue
-                self.reply('{} {} * {} alik.cz {} {} H :0 {}'.format(
-                    IRC.RPL_WHOREPLY.value,
-                    self.user,
-                    data['link'],
-                    config['server'],
-                    nick,
-                    '{}, {}, https://alik.cz/u/{}'.format(
+                self.reply(
+                    msg=('{code} {user} * {link} alik.cz '
+                    '{server} {names} H :0 {description}'),
+                    code=IRC.RPL_WHOREPLY,
+                    link=data['link'],
+                    names=(nick,),
+                    description='{}, {}, https://alik.cz/u/{}'.format(
                         data['age'] or '?',
                         data['sex'],
                         data['link'],
                     ),
-                ))
-        self.reply('{} {} {} :End of /WHO list.'.format(
-            IRC.RPL_ENDOFWHO.value,
-            self.user,
-            args[0],
-        ))
+                )
+        self.reply(
+            msg='{code} {user} {query} :End of /WHO list.',
+            code=IRC.RPL_ENDOFWHO,
+            query=args[0],
+        )
 
     # TODO: Implement this
     # This should query the profile page info, so blocked by Malicek
@@ -1727,9 +1784,9 @@ class Client:
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
-        self.reply('PONG {}'.format(
-            config['server'],
-        ))
+        self.reply(
+            msg='PONG {server}',
+        )
 
     def handle_pong(self, args):
         """Handle PONG commands.
@@ -1786,16 +1843,26 @@ class Client:
     def handle_ison(self, args):
         pass
 
-def sanitize(nick):
-    """Nick substitutions.
+def ircencode(identifier):
+    """Encode nicks for IRC.
 
     Sanitize nicks that are not generally acceptable or break the IRC
     protocol.  Namely this replaces spaces with non-breakable spaces.
 
-    :param nick: The original nickname
-    :returns: Modified nickname
+    :param nick: The original identifier
+    :returns: Encoded identifier
     """
-    return nick.replace('\x20', '\xa0')
+    return identifier.replace('\x20', '\xa0')
+
+def ircdecode(identifier):
+    """Decode IRC nicks into real nicks again.
+
+    Modify sanitized nicks into their original forms.
+
+    :param nick: The encoded identifier
+    :returns: Decoded identifier
+    """
+    return identifier.replace('\xa0', '\x20')
 
 def emoji(msg):
     """Replace Alík's emoticons with corresponding emojis.
