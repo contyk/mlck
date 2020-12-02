@@ -466,15 +466,20 @@ class Client:
         server = ircencode(server)
         if names:
             names = sep.join(map(ircencode, names))
-        self.socket.sendall(
-            msg.format(
-                server=server,
-                user=user,
-                names=names,
-                **kwargs,
-            ).encode(config['encoding']) + \
-            b'\r\n',
-        )
+        try:
+            self.socket.sendall(
+                msg.format(
+                    server=server,
+                    user=user,
+                    names=names,
+                    **kwargs,
+                ).encode(config['encoding']) + \
+                b'\r\n',
+            )
+        except OSError:
+            logger.exception('Could not send data.')
+        except Exception:
+            logger.exception('Unhandled exception while sending data.')
 
     def reply(self, msg, code=None, **kwargs):
         """Send a standard reply in response to a command.
