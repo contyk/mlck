@@ -287,7 +287,7 @@ class Client:
         self.session = None
         return False
 
-    # TODO: Check if the message begins with an originator
+    # FIXME: Check if the message begins with an originator
     #       and if so, strip it.
     def handle(self, msg):
         """Consume messages from the socket.
@@ -305,7 +305,7 @@ class Client:
         try:
             msg = msg.decode(config['encoding'])
         except ValueError:
-            logger.exception('Failed to decode input: %b', msg)
+            logger.exception('Failed to decode input.')
             self.do_error(
                 'That does not look like {}, I am confused.'.format(
                     encoding,
@@ -464,7 +464,7 @@ class Client:
         if not server:
             server = config['server']
         server = ircencode(server)
-        if names:
+        if names is not None:
             names = sep.join(map(ircencode, names))
         try:
             self.socket.sendall(
@@ -544,6 +544,12 @@ class Client:
             response = response or 'You must join the channel first.'
         elif code == IRC.ERR_NOPRIVILEGES:
             response = response or 'You are not allowed to do that here.'
+        elif code == IRC.ERR_NORECIPIENT:
+            response = response or 'No recipient specified.'
+        elif code == IRC.ERR_SUMMONDISABLED:
+            response = response or 'You think you are a summoner, eh?'
+        elif code == IRC.ERR_USERSDISABLED:
+            response = response or 'It is just the two of us.'
         response = response or code
         self.reply(
             msg='{code} {user} {response}',
@@ -552,8 +558,8 @@ class Client:
             **kwargs,
         )
 
-    # TODO: Handle room errors
-    # TODO: Handle channel modes
+    # FIXME: Handle room errors
+    # FIXME: Announce topic changes
     def periodic(self):
         """Automatic periodic check of active channels.
 
@@ -1099,7 +1105,7 @@ class Client:
             return
         self.error(IRC.ERR_PASSWDMISMATCH)
 
-    # TODO: Implement this
+    # FIXME: Implement this
     def handle_mode(self, args):
         """Handle MODE commands.
 
@@ -1147,7 +1153,7 @@ class Client:
             return
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
-    # TODO: Leave all channels once done debugging
+    # FIXME: Leave all channels once done debugging
     def handle_quit(self, args):
         """Handle QUIT commands.
 
@@ -1181,7 +1187,7 @@ class Client:
             return
         self.error(IRC.ERR_NOPRIVILEGES)
 
-    # TODO: Backlog whispers
+    # FIXME: Backlog whispers
     def handle_join(self, args):
         """Handle JOIN commands.
 
@@ -1348,7 +1354,7 @@ class Client:
                 )
             self.lock['channels'].release()
 
-    # TODO: Implement topic setting
+    # FIXME: Implement topic setting
     def handle_topic(self, args):
         """Handle TOPIC commands.
 
@@ -1498,7 +1504,6 @@ class Client:
     def handle_kick(self, args):
         pass
 
-    # TODO: Handle whispering
     def handle_privmsg(self, args):
         """Handle PRIVMSG commands.
 
@@ -1530,15 +1535,55 @@ class Client:
             self.error(IRC.ERR_CANNOTSENDTOCHAN)
             return
         msg = msg[1:]
-        # FIXME: Strip color codes elsewhere and check just ACTION
+        recipient = 0
         if msg.startswith('\x01') and msg.endswith('\x01'):
-            msg = msg.replace('\x01ACTION ', '*')
-            msg = msg.replace('\x01', '*')
+            msg = msg[1:-1]
+            if msg.startswith('ACTION '):
+                msg = '*{}*'.format(msg[7:])
+            else:
+                self.do_privmsg(
+                    config['server'],
+                    chan,
+                    '{}, ctcp: Unsupported extended data'.format(
+                        self.user,
+                    ),
+                )
+                self.lock['channels'].release()
+                return
+        elif msg.startswith('@'):
+            msg = msg[1:].lstrip()
+            pos = msg.find(' ')
+            if pos == -1:
+                self.do_privmsg(
+                    config['server'],
+                    chan,
+                    '{}, whisper usage: @ <target> <message>'.format(
+                        self.user,
+                    ),
+                )
+                self.lock['channels'].release()
+                return
+            else:
+                recipient = ircdecode(msg[0:pos])
+                msg = msg[pos + 1:]
+                if recipient not in cache.ids:
+                    self.do_privmsg(
+                        config['server'],
+                        chan,
+                        '{}, whisper error: Recipient "{}" not found'.format(
+                            self.user,
+                            ircencode(recipient),
+                        ),
+                    )
+                    self.lock['channels'].release()
+                    return
+                recipient = cache.ids[recipient]
+        msg = msg.strip()
         if self.post(
                 'rooms/{}'.format(chan[1:]),
                 data={
                     'action': 'post',
-                    'to': 0,
+                    'to': recipient,
                     'message': ircdecode(msg),
                     'color': self.channels[chan]['color'],
                 },
@@ -1707,7 +1752,7 @@ class Client:
             query=args[0],
         )
 
-    # TODO: Implement this
+    # FIXME: Implement this
     # This should query the profile page info, so blocked by Malicek
     def handle_whois(self, args):
         """Handle WHOIS commands.
@@ -1722,7 +1767,7 @@ class Client:
             return
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
-    # TODO: Implement this
+    # FIXME: Implement this
     def handle_whowas(self, args):
     # This should query the profile page info, so blocked by Malicek
         """Handle WHOWAS commands.
@@ -1792,28 +1837,130 @@ class Client:
         pass
 
     def handle_rehash(self, args):
-        pass
+        """Handle REHASH commands.
+
+        Reloads the server configuration.  In general.
+
+        This is an operator thing.  Refuse.
+
+        :param args: none
+        """
+        self.error(IRC.ERR_NOPRIVILEGES)
 
     def handle_die(self, args):
-        pass
+        """Handle DIE commands.
+
+        Shuts down the server.  In general.
+
+        This is an operator thing.  Refuse.
+
+        :param args: none
+        """
+        self.error(IRC.ERR_NOPRIVILEGES)
 
     def handle_restart(self, args):
-        pass
+        """Handle RESTART commands.
+
+        Restarts the server.  In general.
+
+        This is an operator thing.  Refuse.
+
+        :param args: none
+        """
+        self.error(IRC.ERR_NOPRIVILEGES)
 
     def handle_summon(self, args):
-        pass
+        """Handle SUMMON commands.
+
+        Summons users on the server host or elsewhere to IRC,
+        potentially even a specific channel.  In theory.
+
+        This does not make any sense here.  Parse but refuse.
+        :param args: <user> [<target> [<channel>]]
+        """
+        if not args:
+            self.error(IRC.ERR_NORECIPIENT)
+            return
+        self.error(IRC.ERR_SUMMONDISABLED)
 
     def handle_users(self, args):
-        pass
+        """Handle USERS commands.
+
+        Lists the users on the server system.  In theory.
+
+        We are not going to provide this information.
+
+        :param args: [<target>]
+        """
+        self.error(IRC.ERR_USERSDISABLED)
 
     def handle_wallops(self, args):
-        pass
+        """Handle WALLOPS commands.
+
+        Sends messages to everyone with +w.  There is no one else but
+        us.  Our default is +w but can be toggled.  This whole thing is
+        fairly pointless but if the user wishes, we'll send them the
+        message back.
+
+        :param args: <message>
+        """
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        if self.modes.w:
+            self.send(
+                msg=':{user} WALLOPS :{message}',
+                message=args[1:],
+            )
 
     def handle_userhost(self, args):
-        pass
+        """Handle USERHOST commands.
+
+        Takes a list of nicks and returns their user information.  In
+        our case we'll return the user link name + @alik.cz, if we know
+        it.  Nicks not found, not present or unknown, are simply
+        ignored.
+
+        :param args: <nick> [<nick> [...]]
+        """
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        self.rooms()
+        for nick in args.split(' '):
+            if nick not in cache.links:
+                continue
+            self.reply(
+                msg='{code} {user} :{names} = - {link}@alik.cz',
+                code=IRC.RPL_USERHOST,
+                names=(nick,),
+                link=cache.links[nick],
+            )
 
     def handle_ison(self, args):
-        pass
+        """Handle ISON commands.
+
+        Accepts a list of nicks and response with a list of nicks that
+        match the query and are also online.
+
+        :param args: <nick> [<nick> [...]]
+        """
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        nicks = set(map(ircdecode, args.split(' ')))
+        online = set()
+        rooms = self.rooms()
+        if rooms:
+            for room in rooms:
+                for usr in room['users']:
+                    if ircencode(usr['name']) in nicks:
+                        online.add(ircencode(usr['name']))
+        self.reply(
+            msg='{code} {user} :{names}',
+            code=IRC.RPL_ISON,
+            names=online,
+        )
 
 def ircencode(identifier):
     """Encode nicks for IRC.
