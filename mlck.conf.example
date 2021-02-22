@@ -1,6 +1,14 @@
 [mlck]
-# Advertised server name
-server = alik.contyk.dev
+# Advertised FQDN
+server = localhost.localdomain
+# Server admin
+admin = Unnamed Administrator
+# Server admin email
+email = unnamed.administrator@example.com
+# Server location
+location = The Internet
+# MOTD file
+motd = mlck.motd
 # Log level
 loglevel = debug
 # Address to bind to
@@ -12,7 +20,7 @@ buffer = 1024
 # Socket encoding
 encoding = utf-8
 # Malíček endpoint
-endpoint = https://alik.contyk.dev
+endpoint = http://localhost:3000
 # Malíček request timeout in seconds
 timeout = 2.5
 # Malíček refresh interval in seconds

@@ -204,7 +204,7 @@ class Client:
     Instances represent each individual connection, hold its client
     socket, Malíček session, and various collected metadata.
     """
-    def __init__(self, sock):
+    def __init__(self, sock, peer):
         """Class constructor.
 
         Initializes instance variables; these include the socket
@@ -222,6 +222,7 @@ class Client:
         :returns: A Client instance
         """
         self.socket = sock
+        self.peer = peer
         self.session = None
         self.user = '*'
         self.password = None
@@ -229,6 +230,9 @@ class Client:
         self.modes = types.SimpleNamespace(
             # Away
             a=False,
+            # FIXME: Actually respect this
+            # Convert to emojis (non-standard)
+            e=True,
             # Invisible
             i=False,
             # Server operator
@@ -287,8 +291,7 @@ class Client:
         self.session = None
         return False
 
-    # FIXME: Check if the message begins with an originator
-    #       and if so, strip it.
+    # FIXME: Consider join/parts/kicks without system messages
     def handle(self, msg):
         """Consume messages from the socket.
 
@@ -302,16 +305,23 @@ class Client:
 
         :param msg: Byte sequence representing message input
         """
+        if not msg:
+            return
         try:
             msg = msg.decode(config['encoding'])
         except ValueError:
-            logger.exception('Failed to decode input.')
+            logger.exception('failed to decode input')
             self.do_error(
-                'That does not look like {}, I am confused.'.format(
-                    encoding,
+                'That does not look like {encoding}, I am confused.'.format(
+                    encoding=config['encoding'],
                 ),
             )
             return
+        if msg.startswith(':') or not msg:
+            pos = msg.find(' ')
+            if pos == -1:
+                return
+            msg = msg[pos + 1:]
         pos = msg.find(' ')
         if pos == -1:
             cmd = msg
@@ -323,9 +333,19 @@ class Client:
             return
         cmd = str.upper(cmd)
         if cmd == 'PASS':
-            logger.debug('%s, ***', cmd)
+            logger.debug(
+                '%s, %s, %s, ***',
+                self.peer,
+                self.user,
+                cmd,
+            )
         else:
-            logger.debug('%s, %s', cmd, args)
+            logger.debug('%s, %s, %s, %s',
+                self.peer,
+                self.user,
+                cmd,
+                args,
+            )
         if self.registered() and cmd in ('NICK', 'USER', 'PASS'):
             self.error(IRC.ERR_ALREADYREGISTERED)
             return
@@ -377,11 +397,11 @@ class Client:
         elif cmd == 'LINKS':
             self.handle_links(args)
         elif cmd == 'TIME':
-            cmd.handle_time(args)
+            self.handle_time(args)
         elif cmd == 'CONNECT':
-            cmd.handle_connect(args)
+            self.handle_connect(args)
         elif cmd == 'TRACE':
-            cmd.handle_trace(args)
+            self.handle_trace(args)
         elif cmd == 'ADMIN':
             self.handle_admin(args)
         elif cmd == 'INFO':
@@ -424,7 +444,7 @@ class Client:
             self.handle_ison(args)
         else:
             self.error(IRC.ERR_UNKNOWNCOMMAND)
-            logger.warning('Unknown command: %s, args: %s', cmd, args)
+            logger.warning('unknown command: %s, args: %s', cmd, args)
 
     def send(self, msg, server=None, user=None, names=None, sep=' ', **kwargs):
         """Send a formatted message to our socket.
@@ -466,20 +486,51 @@ class Client:
         server = ircencode(server)
         if names is not None:
             names = sep.join(map(ircencode, names))
+        data = msg.format(
+            server=server,
+            user=user,
+            names=names,
+            **kwargs,
+        )
+        logger.debug(
+            '%s, %s, %s',
+            self.peer,
+            self.user,
+            data,
+        )
         try:
             self.socket.sendall(
-                msg.format(
-                    server=server,
-                    user=user,
-                    names=names,
-                    **kwargs,
-                ).encode(config['encoding']) + \
+                data.encode(config['encoding']) + \
                 b'\r\n',
             )
-        except OSError:
-            logger.exception('Could not send data.')
+        except socket.error:
+            logger.error('%s, could not send data, terminating', self.peer)
+            self.terminate()
         except Exception:
-            logger.exception('Unhandled exception while sending data.')
+            logger.exception('%s, unhandled exception', self.peer)
+
+    def terminate(self):
+        """Terminate the client connection.
+
+        Sometimes we may encounter errors we can't recover from and the
+        only sensible thing to do is to tell the client to go away.
+        Handle any error reporting outside of this method, then call
+        terminate to destroy the session, unregister the selector and
+        close the link.
+        """
+        try:
+            sel.unregister(self.socket)
+        except Exception:
+            pass
+        if self.registered():
+            self.session = None
+            self.auto.join()
+        try:
+            self.socket.close()
+        except socket.error:
+            pass
+        except Exception:
+            self.exception('unhandled exception')
 
     def reply(self, msg, code=None, **kwargs):
         """Send a standard reply in response to a command.
@@ -498,7 +549,6 @@ class Client:
         :param code: IRC response code enum
         :param **kwargs: Additional formatting keywords
         """
-        logger.debug(msg)
         if code:
             code = code.value
         self.send(
@@ -525,7 +575,6 @@ class Client:
         :param response: Optional error message
         :param kwargs: Additional formatting keywords
         """
-        logger.debug('%s, %s', code, response)
         if code == IRC.ERR_NEEDMOREPARAMS:
             response = response or 'Not enough parameters given.'
         elif code == IRC.ERR_UNKNOWNCOMMAND:
@@ -550,16 +599,20 @@ class Client:
             response = response or 'You think you are a summoner, eh?'
         elif code == IRC.ERR_USERSDISABLED:
             response = response or 'It is just the two of us.'
+        elif code == IRC.ERR_NOSUCHSERVICE:
+            response = response or 'There are no services here.'
+        elif code == IRC.ERR_RESTRICTED:
+            response = response or 'Your nick is restricted to {}.'.format(
+                self.user,
+            )
         response = response or code
         self.reply(
-            msg='{code} {user} {response}',
+            msg='{code} {user} :{response}',
             code=code,
             response=response,
             **kwargs,
         )
 
-    # FIXME: Handle room errors
-    # FIXME: Announce topic changes
     def periodic(self):
         """Automatic periodic check of active channels.
 
@@ -577,10 +630,40 @@ class Client:
         while self.registered():
             self.lock['channels'].acquire()
             for chan in self.channels:
-                logger.debug(chan)
+                logger.debug(
+                    '%s, %s, %s',
+                    self.peer,
+                    self.user,
+                    chan
+                )
                 res = self.get('rooms/{}'.format(chan[1:]))
                 if not res:
                     continue
+                # FIXME: Handle these
+                if res.code != requests.codes.ok:
+                    # Send wallops or privmsg
+                    # Malicek codes:
+                    # - 4: kicked for inactivity
+                    # - 5: you left
+                    # - 6: room doesn't exist
+                    # - 8: blocked by admin
+                    # - 9: locked
+                    # - 11: kicked out (and blocked?)
+                    if res.code == 401:
+                        # Session dead, kill everything, close link
+                        pass
+                    if res.data['alik'] == 4:
+                        pass
+                    elif res.data['alik'] == 5:
+                        pass
+                    elif res.data['alik'] == 6:
+                        pass
+                    elif res.data['alik'] == 8:
+                        pass
+                    elif res.data['alik'] == 9:
+                        pass
+                    elif res.data['alik'] == 11:
+                        pass
                 messages = list()
                 for msg in res.data['messages']:
                     if msg == self.channels[chan]['seen']:
@@ -593,12 +676,15 @@ class Client:
                 if ctime - self.channels[chan]['activity'] > 15 * 60:
                     if self.keepalive(chan):
                         self.channels[chan]['activity'] = ctime
-                self.channels[chan]['topic'] = '{}{}'.format(
+                topic = '{}{}'.format(
                     res.data['name'],
                     ' | {}'.format(res.data['topic']) \
                         if res.data['topic'] \
                         else '',
                 )
+                if self.channels[chan]['topic'] != topic:
+                    self.do_topic(chan, topic)
+                self.channels[chan]['topic'] = topic
                 for usr in res.data['users']:
                     if usr['name'] not in cache.ids and usr['id']:
                         cache.ids[usr['name']] = usr['id']
@@ -616,8 +702,8 @@ class Client:
                             continue
                         if msg['event']['type'] == 'part':
                             if msg['event']['source'] \
-                                in self.channels[chan]['operators']:
-                                self.channels[chan]['operators'].remove(
+                                in self.channels[chan]['ops']:
+                                self.channels[chan]['ops'].remove(
                                     msg['event']['source']
                                 )
                             self.do_part(
@@ -628,8 +714,8 @@ class Client:
                             continue
                         if msg['event']['type'] == 'kick':
                             if msg['event']['source'] \
-                                in self.channels[chan]['operators']:
-                                self.channels[chan]['operators'].remove(
+                                in self.channels[chan]['ops']:
+                                self.channels[chan]['ops'].remove(
                                     msg['event']['source']
                                 )
                             self.do_kick(
@@ -650,26 +736,41 @@ class Client:
                             )
                     )
                 for usr in res.data['users']:
-                    if not usr['admin'] \
-                        and usr['name'] in self.channels[chan]['operators']:
-                        self.channels[chan]['operators'].remove(usr['name'])
+                    mode = None
+                    if usr['admin']:
+                        if ('rooms' in usr['admin']
+                            or 'master' in usr['admin']
+                            or 'guru' in usr['admin']) \
+                            and usr['name'] not in self.channels[chan]['ops']:
+                            self.channels[chan]['ops'].add(usr['name'])
+                            mode = 'o'
+                        elif 'chat' in usr['admin'] \
+                            and usr['name'] not in self.channels[chan]['voices']:
+                            self.channels[chan]['voices'].add(usr['name'])
+                            mode = 'v'
+                        if mode:
+                            mode = '+{}'.format(mode)
+                    else:
+                        if usr['name'] in self.channels[chan]['ops']:
+                            self.channels[chan]['ops'].remove(usr['name'])
+                            mode = 'o'
+                        elif usr['name'] in self.channels[chan]['voices']:
+                            self.channels[chan]['voices'].remove(usr['name'])
+                            mode = 'v'
+                        if mode:
+                            mode = '-{}'.format(mode)
+                    if mode:
                         self.do_mode(config['server'], chan,
-                            '-o {}'.format(usr['name']))
-                    elif usr['admin'] \
-                        and usr['name'] not in self.channels[chan]['operators']:
-                        self.channels[chan]['operators'].add(usr['name'])
-                        self.do_mode(config['server'], chan,
-                            '+o {}'.format(usr['name']))
+                            '{} {}'.format(mode, ircencode(usr['name'])))
                 if res.data['allowed'] != self.channels[chan]['allowed']:
                     self.channels[chan]['allowed'] = res.data['allowed']
                     if res.data['allowed'] == 'all':
                         self.do_mode(config['server'], chan, '-iI')
                     elif res.data['allowed'] == 'none':
-                        self.do_mode(config['server'], chan, '+i -I')
+                        self.do_mode(config['server'], chan, '+i-I')
                     else:
                         self.do_mode(config['server'], chan, '+iI {}'.format(
                             res.data['allowed']))
-                    pass
             self.lock['channels'].release()
             time.sleep(config['refresh'])
 
@@ -686,7 +787,12 @@ class Client:
 
         :param chan: Channel name
         """
-        logger.debug(chan)
+        logger.debug(
+            '%s, %s, %s',
+            self.peer,
+            self.user,
+            chan
+        )
         msg = '[ malíček/keepalive {} ]'.format(
             str.lower(
                 ''.join(random.choice(string.hexdigits) for i in range(16))
@@ -727,14 +833,16 @@ class Client:
                 when=STARTED,
             )
             self.reply(
-                msg='{code} {user} :{server} mlck-{version} aioOrsw biInto',
+                msg=('{code} {user} :{server} mlck-{version} '
+                    'aeioOrsw bhiIntovZ'),
                 code=IRC.RPL_MYINFO,
                 version=VERSION,
             )
+            self.handle_motd(None)
+            self.error(IRC.ERR_RESTRICTED)
         else:
             self.error(IRC.ERR_PASSWDMISMATCH)
-            sel.unregister(self.socket)
-            self.socket.close()
+            self.terminate()
 
     def registered(self):
         """Check if our connection has been registered.
@@ -768,7 +876,7 @@ class Client:
         except json.decoder.JSONDecodeError:
             data = None
         except Exception:
-            logger.exception('Failed handling Malicek response')
+            logger.exception('failed handling malicek response')
         return types.SimpleNamespace(
             code=response.status_code,
             headers=response.headers,
@@ -793,9 +901,15 @@ class Client:
             )
             return self.process_response(response)
         except requests.exceptions.Timeout:
-            logger.warning('get: timeout while processing %s, params: %s',
+            logger.warning('timeout while processing %s, params: %s',
                 resource, params)
             return None
+        except requests.exceptions.ConnectionError:
+            logger.error('cannot connect to Malíček, closing connection')
+            self.do_error('Cannot connect to Malíček, terminating.')
+            self.terminate()
+        except Exception:
+            logger.exception('unhandled exception')
 
     def post(self, resource, params=None, data=None):
         """Fetch Malíček resources using POST
@@ -820,9 +934,15 @@ class Client:
             )
             return self.process_response(response)
         except requests.exceptions.Timeout:
-            logger.warning('post: timeout while processing %s, params: %s',
+            logger.warning('timeout while processing %s, params: %s',
                 resource, params)
             return None
+        except requests.exceptions.ConnectionError:
+            logger.error('cannot connect to Malíček, closing connection')
+            self.do_error('Cannot connect to Malíček, terminating.')
+            self.terminate()
+        except Exception:
+            logger.exception('unhandled exception')
 
     def login(self):
         """Initiate the Malíček session.
@@ -835,7 +955,11 @@ class Client:
 
         :returns: True if we managed to log in, False otherwise
         """
-        logger.debug(self.user)
+        logger.debug(
+            '%s, %s',
+            self.peer,
+            self.user,
+        )
         r = self.post(
             'login',
             data={
@@ -852,7 +976,11 @@ class Client:
         Calls the /logout resource.  The only real use is a cleanup, so
         this gets called from the destructor.
         """
-        logger.debug(self.user)
+        logger.debug(
+            '%s, %s',
+            self.peer,
+            self.user,
+        )
         self.get('logout')
 
     def rooms(self):
@@ -862,33 +990,35 @@ class Client:
 
         :returns: Request response
         """
-        logger.debug('-')
         rooms = self.get('rooms/')
         if rooms:
-            cache.links.update({
-                u['name']: u['link'] \
-                for r in rooms.data \
-                for u in r['users']
-            })
-            return rooms.data
+            if rooms.code == requests.codes.ok:
+                cache.links.update({
+                    u['name']: u['link'] \
+                    for r in rooms.data \
+                    for u in r['users']
+                })
+                return rooms.data
+            else:
+                # FIXME: Unauthorized? Terminate.
+                pass
         return None
 
-    def do_mode(self, who, chan, modes):
+    def do_mode(self, who, target, modes):
         """Send the MODE command.
 
-        ...
+        Emit a mode setting message.  This can be to response to the
+        user's own MODE commands or produced by periodic() as things
+        happen in channels.
+
         :param who: Who's changing the mode, typically *
-        :param chan: The affected channel
+        :param target: The affected channel or user
         :param modes: Full modes, including arguments and +/-
         """
-        logger.debug('{}, {}, {}', who, chan, modes)
-        if who != config['server']:
-            # FIXME: Should handle those.
-            pass
         self.send(
-            ':{user} MODE {channel} {modes}',
+            msg=':{user} MODE {target} {modes}',
             user=who,
-            channel=chan,
+            target=target,
             modes=modes,
         )
 
@@ -908,10 +1038,9 @@ class Client:
         :param target: The target, typically a channel
         :param message: The message to send
         """
-        logger.debug('%s, %s, %s', sender, target, message)
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
-                cache.links[sender] or '*')
+                cache.links[sender] if sender in cache.links else '*')
         self.send(
             msg=':{user} PRIVMSG {target} :{message}',
             user=sender,
@@ -935,10 +1064,9 @@ class Client:
         :param target: The target, typically a channel
         :param message: The message to send
         """
-        logger.debug('%s, %s, %s', sender, target, message)
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
-                cache.links[sender] or '*')
+                cache.links[sender] if sender in cache.links else '*')
         self.send(
             msg=':{user} NOTICE {target} :{message}',
             user=sender,
@@ -961,10 +1089,9 @@ class Client:
         :param sender: The joining person, their NICK
         :param channel: The channel they are joining
         """
-        logger.debug('%s, %s', sender, channel)
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
-                cache.links[sender] or '*')
+                cache.links[sender] if sender in cache.links else '*')
         self.send(
             msg=':{user} JOIN {channel}',
             user=sender,
@@ -988,15 +1115,30 @@ class Client:
         :param channel: The channel they are leaving
         :param msg: Optional parting message
         """
-        logger.debug('%s, %s, %s', sender, channel, msg)
         if sender != config['server']:
             sender = '{}!{}@alik.cz'.format(sender,
-                cache.links[sender] or '*')
+                cache.links[sender] if sender in cache.links else '*')
         self.send(
             msg=':{user} PART {channel} :{message}',
             user=sender,
             channel=channel,
             message=msg or '',
+        )
+
+    def do_topic(self, channel, topic):
+        """Send the TOPIC command.
+
+        Send TOPIC to the channel.  We don't normally know who did this
+        so we don't care who the sender is and always send it as the
+        server.
+
+        :param channel: Channel changing its topic
+        :param topic: The new topic
+        """
+        self.send(
+            msg=':{server} TOPIC {channel} :{topic}',
+            channel=channel,
+            topic=topic,
         )
 
     def do_kick(self, who, whom, chan, msg):
@@ -1009,10 +1151,9 @@ class Client:
         :param chan: What channel is this happening on
         :param msg: Kick message
         """
-        logger.debug('%s, %s, %s, %s', who, whom, chan, msg)
         if who != config['server']:
             who = '{}!{}@alik.cz'.format(who,
-                cache.links[sender] or '*')
+                cache.links[sender] if sender in cache.links else '*')
         self.send(
             msg=':{user} KICK {channel} {names} :{message}',
             user=who,
@@ -1033,7 +1174,6 @@ class Client:
 
         :param message: The error message to send
         """
-        logger.debug(message)
         message = message or 'An error is an error.'
         self.send(
             msg=':{server} ERROR :{message}',
@@ -1048,7 +1188,6 @@ class Client:
 
         :param args: <password>
         """
-        logger.debug('***')
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
@@ -1065,13 +1204,13 @@ class Client:
 
         :param args: <nick>
         """
-        logger.debug(args)
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
         self.user = args
         self.register()
 
+    # FIXME: Parse the user mask and set +i (& 8), +w (& 4)
     def handle_user(self, args):
         """Handle USER commands.
 
@@ -1084,7 +1223,6 @@ class Client:
 
         :param args: <USER string>
         """
-        logger.debug(args)
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
@@ -1099,45 +1237,239 @@ class Client:
 
         :param args: <username> <password>
         """
-        logger.debug('***')
         if not args or args.find(' ') == -1:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
         self.error(IRC.ERR_PASSWDMISMATCH)
 
-    # FIXME: Implement this
     def handle_mode(self, args):
         """Handle MODE commands.
 
         Sets user or channel modes.  With no modes, just queries the
         current modes.
 
-        Currently we don't support any modes.
+        Most standard modes are supported within reason, even though
+        many don't have any real effect.
 
-        In theory we could support an extremely limited subset of modes
-        later.  These would include:
+            User mode a: Away; set via /away, not here, unused
+            User mode e: Use emoji, non-standard, default
+            User mode i: Invisible, unused
+            User mode o: Server operator, unused
+            User mode O: Local server operator, unused
+            User mode r: Restricted, no nick changes, default
+            User mode s: Receives server notices, default
+            User mode w: Receives wallops, default
 
-            User mode w: Just our user; receives wallops or not
-
+            Channel mode b: Bans nicks from all chatrooms
+            Channel mode h: Denotes channel halfop, chat admin
+            Channel mode i: Invite only, channel locking
+            Channel mode I: Invite list, friends, boys, girls
             Channel mode n: Must be a member to message
-            Channel mode o: Query or set the channel operator
-            Channel mode O: Query the channel creator
+            Channel mode o: Denotes the channel operator, rooms+
+            Channel mode O: Query the channel creator, unused
             Channel mode t: Must be the channel op to change toppic
+            Channel mode v: Denotes channel voice, other admin
+            Channel mode Z: Special, long commands (clear, destroy)
 
-        Users could manipulate the user mode 'w' and the channel mode
-        'o', assuming they're the operator.  They could query the
-        channel mode 'O', but only if they're on that channel due to
-        backend limitations.
+        Users can toggle 'e', 'i', 's' and 'w' user modes.  'a' needs to
+        be set via /away.  The remaining modes are hardcoded.
 
-        All channels could have the 'n' and 't' modes because that's
-        just our reality.  Question is whether it's useful.
+        For channels, users can set or query 'b' and 'I', set 'o' and
+        'Z, toggle 'i', and query 'O'.  The remaining modes are
+        hardcoded and ignored.  Some of these may require chanop or
+        admin privileges.
 
-        :param args: <nick/channel> [<modes> [<params>]]
+        User mode 'e' can be changed to configure the emoji conversion.
+
+        Modes 'b', 'i', 'I' and 'o' only work for rooms admins or
+        higher.  Regardin 'b', just setting the mode doesn't do much but
+        when someone is kicked and their nick matches the ban, they also
+        get banned from all rooms.  Once that happens, the ban is
+        forgotten on our side.
+
+        Wildcards are not accepted.
+
+        All channels have the 'n' and 't' modes because that's just our
+        reality.
+
+        Parsing is handled via parse_mode().
+
+        :param args: <nick/channel> [<+-><modes>[+-<modes>]* [<params>]]*
         """
-        logger.debug(args)
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
-        self.error(IRC.ERR_UNKNOWNCOMMAND)
+        args = args.split(' ', 1)
+        if args[0].startswith('#'):
+            self.lock['channels'].acquire()
+            if args[0] not in self.channels:
+                self.error(IRC.ERR_USERNOTINCHANNEL)
+                self.lock['channels'].release()
+                return
+            if len(args) > 1 and args[1]:
+                parser_result = parse_mode(args[1])
+                if not parser_result:
+                    self.error(IRC.ERR_UNKNOWNMODE)
+                    self.lock['channels'].release()
+                    return
+                else:
+                    modes, unknown = parser_result
+                for mode in modes:
+                    if mode.mode == 'b':
+                        if not mode.argument:
+                            for banned in self.channels[args[0]]['banlist']:
+                                self.reply(
+                                    msg='{code} {user} {banned}',
+                                    code=IRC.RPL_BANLIST,
+                                    banned=banned,
+                                )
+                            self.reply(
+                                msg='{code} {user} :End of ban list.',
+                                code=IRC.RPL_ENDOFBANLIST,
+                            )
+                        else:
+                            # FIXME: Implement changing banlist
+                            pass
+                    elif mode.mode == 'i':
+                        # FIXME: Implement locking
+                        # This needs to happen at the end, though, to
+                        # rspect the invite list
+                        pass
+                    elif mode.mode == 'I':
+                        if not mode.argument:
+                            if self.channels[args[0]]['allowed'] \
+                                not in ('all', 'none'):
+                                self.reply(
+                                    msg='{code} {user} {allowed}',
+                                    code=IRC.RPL_INVITELIST,
+                                    allowed=self.channels[args[0]]['allowed'],
+                                )
+                            self.reply(
+                                msg='{code} {user} :End of invite list.',
+                                code=IRC.RPL_ENDOFINVITELIST,
+                            )
+                        else:
+                            # FIXME: Implement changing allow list
+                            pass
+                    elif mode.mode == 'o':
+                        # FIXME: Implement changing chanop
+                        pass
+                    elif mode.mode == 'O':
+                        # Implement creator queries
+                        pass
+                    elif mode.mode == 'Z':
+                        if self.user not in self.channels[args[0]]['ops']:
+                            pass
+                        if mode.argument == 'clear':
+                            # FIXME: Implement clear
+                            pass
+                        elif mode.argument == 'destroy':
+                            # FIXME: Implement destroy
+                            pass
+                if unknown:
+                    self.error(
+                        IRC.ERR_UNKNOWNMODE,
+                        'Unknown mode flags: {}'.format(
+                            ''.join(sorted(unknown)),
+                        ),
+                    )
+            else:
+                mode_string = '+{}nt'.format(
+                    'i' \
+                        if self.channels[args[0]]['allowed'] != 'all' \
+                        else '',
+                )
+                self.reply(
+                    msg='{code} {user} {channel} {modes}',
+                    code=IRC.RPL_CHANNELMODEIS,
+                    channel=args[0],
+                    modes=mode_string,
+                )
+            self.lock['channels'].release()
+        elif args[0] == self.user:
+            if len(args) > 1 and args[1]:
+                parser_result = parse_mode(args[1], user=True)
+                if not parser_result:
+                    self.error(
+                        IRC.ERR_UMODEUNKNOWNFLAG,
+                        'Modes not understood.',
+                    )
+                    return
+                else:
+                    modes, unknown = parser_result
+                if unknown:
+                    # Report unknown modes
+                    pass
+                if not modes:
+                    # Failed to parse modes
+                    pass
+                positive = set()
+                negative = set()
+                for mode in modes:
+                    if mode.mode == 'e':
+                        self.modes.e = mode.state
+                    elif mode.mode == 'i':
+                        self.modes.i = mode.state
+                    elif mode.mode == 's':
+                        self.modes.s = mode.state
+                    elif mode.mode == 'w':
+                        self.modes.w = mode.state
+                    else:
+                        continue
+                    if mode.state:
+                        positive.add(mode.mode)
+                        if mode.mode in negative:
+                            negative.remove(mode.mode)
+                    else:
+                        negative.add(mode.mode)
+                        if mode.mode in positive:
+                            positive.remove(mode.mode)
+                mode_string = '{}{}{}{}'.format(
+                    '+' if positive else '',
+                    ''.join(sorted(positive)),
+                    '-' if negative else '',
+                    ''.join(sorted(negative)),
+                )
+                if unknown:
+                    self.error(
+                        IRC.ERR_UMODEUNKNOWNFLAG,
+                        'Unknown mode flags: {}'.format(
+                            ''.join(sorted(unknown)),
+                        ),
+                    )
+                if mode_string:
+                    self.do_mode(
+                        self.user,
+                        self.user,
+                        mode_string,
+                    )
+            else:
+                modes = list()
+                if self.modes.a:
+                    modes.append('a')
+                if self.modes.e:
+                    modes.append('e')
+                if self.modes.i:
+                    modes.append('i')
+                if self.modes.o:
+                    modes.append('o')
+                if self.modes.O:
+                    modes.append('O')
+                if self.modes.r:
+                    modes.append('r')
+                if self.modes.s:
+                    modes.append('s')
+                if self.modes.w:
+                    modes.append('w')
+                modes = '+{}'.format(''.join(modes)) \
+                    if modes \
+                    else ''
+                self.reply(
+                    msg='{code} {user} {modes}',
+                    code=IRC.RPL_UMODEIS,
+                    modes=modes,
+                )
+        else:
+            self.error(IRC.ERR_USERSDONTMATCH)
 
     def handle_service(self, args):
         """Handle SERVICE commands.
@@ -1147,7 +1479,6 @@ class Client:
 
         :param args: <nick> <reserved> <dist> <type> <reserved> <info>
         """
-        logger.debug(args)
         if not args or args.count(' ') < 5:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
@@ -1165,13 +1496,8 @@ class Client:
         in the development and it could hinder testing with unnecessary
         spam.
         """
-        logger.debug(args)
-        sel.unregister(self.socket)
-        try:
-            self.do_error('Buh-bye!')
-            self.socket.close()
-        except:
-            pass
+        self.do_error('Buh-bye!')
+        self.terminate()
 
     def handle_squit(self, args):
         """Handle SQUIT commands.
@@ -1187,7 +1513,6 @@ class Client:
             return
         self.error(IRC.ERR_NOPRIVILEGES)
 
-    # FIXME: Backlog whispers
     def handle_join(self, args):
         """Handle JOIN commands.
 
@@ -1205,7 +1530,6 @@ class Client:
 
         :param args: [0|<channel>[,<channel>]* [<key>[,<key>]*]]
         """
-        logger.debug(args)
         if not args:
             return
         if args == '0':
@@ -1249,14 +1573,21 @@ class Client:
                 color = settings.data['color']
             else:
                 color = config['color']
-            operators = set()
+            ops = set()
+            halfops = set()
+            voices = set()
             for usr in res.data['users']:
                 if usr['name'] not in cache.ids and usr['id']:
                     cache.ids[usr['name']] = usr['id']
                 if usr['name'] not in cache.links and usr['link']:
                     cache.links[usr['name']] = usr['link']
-                if usr['admin']:
-                    operators.add(usr['name'])
+                prefix = get_prefix(usr['admin'])
+                if prefix == '@':
+                    ops.add(usr['name'])
+                elif prefix == '%':
+                    halfops.add(usr['name'])
+                elif prefix == '+':
+                    voices.add(usr['name'])
             self.do_join(self.user, chan)
             topic = '{}{}'.format(
                 res.data['name'],
@@ -1274,7 +1605,7 @@ class Client:
                 channel=chan,
                 names=[
                     '{}{}'.format(
-                        ('@' if x['admin'] else ''),
+                        get_prefix(x['admin']),
                         x['name'],
                     ) for x in res.data['users']
                 ],
@@ -1284,16 +1615,16 @@ class Client:
                 code=IRC.RPL_ENDOFNAMES,
                 channel=chan,
             )
-            # No external messages, only chanops change topics
-            self.do_mode(config['server'], chan, '+nt')
+            self.do_mode(config['server'], chan, '+Ont {}'.format(
+                res.data['creator'],
+            ))
             if res.data['allowed'] != 'all':
                 if res.data['allowed'] == 'none':
-                    # Invite only, for no one
                     self.do_mode(config['server'], chan, '+i')
                 else:
-                    # Invite only for the "allowed"
                     self.do_mode(config['server'], chan, '+iI {}'.format(
-                        res.data['allowed'])
+                            res.data['allowed'],
+                        )
                     )
             messages = res.data['messages']
             messages.reverse()
@@ -1303,17 +1634,28 @@ class Client:
                     chan,
                     '@{} {}: {}'.format(
                         msg['time'] or '??:??:??',
-                        msg['from'] or config['server'],
+                        ircencode(msg['from']) or ':',
                         emoji(msg['message']),
-                    ),
+                    ) \
+                        if not msg['to'] else \
+                        '@{} {} → {}: {}'.format(
+                            msg['time'] or '??:??:??',
+                            ircencode(msg['from']) or ':',
+                            ircencode(msg['to']),
+                            emoji(msg['message']),
+                        ),
                 )
             self.lock['channels'].acquire()
             self.channels[chan] = {
                 'activity': int(time.time()),
                 'color': color,
                 'topic': topic,
-                'operators': operators,
+                'creator': res.data['creator'],
+                'ops': ops,
+                'halfops': halfops,
+                'voices': voices,
                 'allowed': res.data['allowed'],
+                'banlist': set(),
             }
             if messages:
                 self.channels[chan]['seen'] = messages[-1]
@@ -1331,7 +1673,6 @@ class Client:
 
         :param args: <channel>[,<channel>]*[ :<message>]
         """
-        logger.debug(args)
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
@@ -1354,7 +1695,6 @@ class Client:
                 )
             self.lock['channels'].release()
 
-    # FIXME: Implement topic setting
     def handle_topic(self, args):
         """Handle TOPIC commands.
 
@@ -1366,29 +1706,42 @@ class Client:
 
         :param args: <channel> [:<topic>]
         """
-        logger.debug(args)
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
         if args.find(' ') != -1:
-            self.error(
-                IRC.ERR_UNKNOWNCOMMAND,
-                'Setting channel modes is currently unsupported.',
-            )
-            return
+            chan, topic = args.split(' ', 1)
+        else:
+            chan = args
+            topic = None
         self.lock['channels'].acquire()
-        if not args in self.channels:
+        if chan not in self.channels:
             self.error(IRC.ERR_NOTONCHANNEL)
         else:
-            self.reply(
-                msg='{code} {user} {channel} :{topic}',
-                code=IRC.RPL_TOPIC,
-                channel=args,
-                topic=self.channels[args]['topic'],
-            )
+            if topic:
+                topic = topic[1:]
+                if self.user not in self.channels[chan]['ops']:
+                    self.error(IRC.ERR_CHANOPRIVSNEEDED)
+                else:
+                    self.post(
+                        'rooms/{}'.format(chan[1:]),
+                        data={
+                            'action': 'post',
+                            'to': 0,
+                            'message': '[Z]{}'.format(ircdecode(topic)),
+                            'color': self.channels[chan]['color'],
+                        },
+                    )
+            else:
+                self.reply(
+                    msg='{code} {user} {channel} :{topic}',
+                    code=IRC.RPL_TOPIC,
+                    channel=chan,
+                    topic=self.channels[args]['topic'],
+                )
         self.lock['channels'].release()
 
-    # FIXME: Should we update operators here?
+    # FIXME: Update the ops if it's our room
     def handle_names(self, args):
         """Handle NAMES commands.
 
@@ -1402,7 +1755,6 @@ class Client:
 
         :param args: [<channel>[,<channel>]* [<target>]]
         """
-        logger.debug(args)
         rooms = self.rooms()
         if not rooms:
             self.error(
@@ -1423,9 +1775,10 @@ class Client:
                 msg='{code} {user} = #{channel} :{names}',
                 code=IRC.RPL_NAMEREPLY,
                 channel=room['id'],
+                # FIXME: Send the right prefix
                 names=[
                     '{}{}'.format(
-                        ('@' if x['admin'] else ''),
+                        get_prefix(x['admin']),
                         x['name'],
                     ) for x in room['users']
                 ],
@@ -1454,7 +1807,6 @@ class Client:
 
         :param args: [<channel>[,<channel>]* [<target>]]
         """
-        logger.debug(args)
         only = set()
         if args:
             for pattern in args.split(' ')[0].split(','):
@@ -1499,10 +1851,25 @@ class Client:
         )
 
     def handle_invite(self, args):
-        pass
+        """Handle INVITE commands.
 
+        Invite other users to channels, notifying them.  There is no
+        comparable backend feature, perhaps besides sending Alík mail to
+        the user.  We just return an error like with PRIVMSG.
+
+        :param args: <nickname> <channel>
+        """
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        if args.find(' ') == -1:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        self.error(IRC.ERR_NOSUCHNICK)
+
+    # FIXME: Implement this
     def handle_kick(self, args):
-        pass
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     def handle_privmsg(self, args):
         """Handle PRIVMSG commands.
@@ -1519,7 +1886,6 @@ class Client:
 
         :param args: <msgtarget> <text>
         """
-        logger.debug(args)
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
@@ -1600,6 +1966,7 @@ class Client:
         self.lock['channels'].release()
 
     # FIXME: Don't send messages; use this for reporting misdemeanor
+    # Blocked by Malicek
     def handle_notice(self, args):
         """Handle NOTICE commands.
 
@@ -1608,46 +1975,311 @@ class Client:
 
         :param args: <msgtarget> <text>
         """
-        logger.debug(args)
         self.handle_privmsg(args)
 
     def handle_motd(self, args):
-        pass
+        """Handle MOTD commands.
 
+        Reload server MOTD and echo it.  This could provide some welcome
+        message as well as a bssic manual.  The MOTD file path should be
+        specified in the config.
+
+        Arguments ignored.
+
+        :param args: [<target>]
+        """
+        try:
+            with open(config['motd']) as motd_fh:
+                self.reply(
+                    msg='{code} {user} :- {server} message of the day',
+                    code=IRC.RPL_MOTDSTART,
+                )
+                for motd in motd_fh.readlines():
+                    self.reply(
+                        msg='{code} {user} :- {message}',
+                        code=IRC.RPL_MOTD,
+                        message=motd,
+                    )
+                self.reply(
+                    msg='{code} {user} :End of MOTD.',
+                    code=IRC.RPL_ENDOFMOTD,
+                )
+        except FileNotFoundError:
+            self.error(IRC.ERR_NOMOTD)
+            logger.error('motd file %s not found.', config['motd'])
+        except PermissionError:
+            self.error(IRC.ERR_NOMOTD)
+            logger.error('cannot open motd file %s.', config['motd'])
+        except Exception:
+            self.error(IRC.ERR_NOMOTD)
+            logger.exception('unhandled exception')
+
+    # FIXME: Implement this
+    # Potentially list all other mlck clients, or just LUSER_ME
     def handle_lusers(self, args):
-        pass
+        """Handle LUSERS commands.
+
+        The command queries the local IRC users.
+
+        :param args: [<mask> [<target>]]
+        """
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     def handle_version(self, args):
-        pass
+        """Handle VERSION commands.
 
+        Queries the server version.  To make this somewhat more useful,
+        we also query Malíček for its version and add it to the comment.
+
+        Arguments are ignored.
+
+        :param args: [<target>]
+        """
+        malicek = self.get('malicek')
+        if malicek and malicek.data:
+            malicek = '{}-{}'.format(
+                malicek.data['app'],
+                malicek.data['version'],
+            )
+        else:
+            malicek = 'Malíček version unavailable'
+        self.reply(
+            msg=('{code} {user} mlck-{version}.{debug} {server} '
+                ':mlck-{version}, {malicek}'),
+            code=IRC.RPL_VERSION,
+            version=VERSION,
+            debug=config['loglevel'].lower(),
+            malicek=malicek,
+        )
+
+    # FIXME: Implement this
+    # Maybe, if we decide to publish these things; also see LUSERS
     def handle_stats(self, args):
-        pass
+        """Handle STATS commands.
+
+        Provides server statistics for the query, or all queries if
+        unspecified.  Target is ignored.
+
+        Queries can combine multiple letters and the meaning is:
+
+            * l - server connections
+            * m - usage count for commands
+            * o - number of configured ops
+            * u - uptime
+
+        :param args: [<query> [<target>]]
+        """
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     def handle_links(self, args):
-        pass
+        """Handle LINKS commands.
+
+        Shows links to other servers.  We don't have any, ever.
+
+        :param args: [[<target>] <mask>]
+        """
+        if not args:
+            mask = '*'
+        else:
+            pos = args.find(' ')
+            if pos != -1:
+                mask = args[pos + 1:]
+            else:
+                mask = args
+        self.reply(
+            msg='{code} {user} {mask} :End of LINKS',
+            code=IRC.RPL_ENDOFLINKS,
+            mask=mask,
+        )
 
     def handle_time(self, args):
-        pass
+        """Handle TIME commands.
+
+        Just return the timestamp of the local server time.  No
+        formatting is specified, so we'll just use the same as in
+        uptime.  Target is ignored.
+
+        :param args: [<target>]
+        """
+        self.reply(
+            msg='{code} {user} :{time}',
+            code=IRC.RPL_TIME,
+            time=time.strftime('%a %b %d %Y at %H:%M:%S', time.localtime()),
+        )
 
     def handle_connect(self, args):
-        pass
+        """Handle CONNECT commands.
 
+        Connect the server to another server.  Server operator only, so
+        unsupported in our case.
+
+        :param args: <remote> <port> [<target>]
+        """
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        if args.find(' ') == -1:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        self.error(IRC.ERR_NOPRIVILEGES)
+
+    # FIXME: Implement this
     def handle_trace(self, args):
-        pass
+        self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     def handle_admin(self, args):
-        pass
+        """Handle ADMIN commands.
+
+        Provides information about the server admin, who it is and their
+        contact info.  Sourced from our configuration.
+
+        :param args: none
+        """
+        self.reply(
+            msg='{code} {user} :{server} administration',
+            code=IRC.RPL_ADMINME,
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_ADMINLOC1,
+            message=config['location'],
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_ADMINLOC2,
+            message=config['admin'],
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_ADMINEMAIL,
+            message=config['email'],
+        )
 
     def handle_info(self, args):
-        pass
+        """Handle INFO commands.
+
+        Provide some basic information about our server.  The target
+        argument is ignored.
+
+        We provide our name, version, Malicek endpoint, Malicek version,
+        our uptime, our admin, our loglevel, our default color, refresh
+        and timeout values, encoding, and, buffer size and the user.
+
+        :param args: [<target>]
+        """
+        malicek = self.get('malicek')
+        if malicek and malicek.data:
+            malicek = malicek.data['version']
+        else:
+            malicek = 'unknown'
+        self.reply(
+            msg='{code} {user} :This is {server}',
+            code=IRC.RPL_INFO,
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='mlck, version {}.{}'.format(
+                VERSION,
+                config['loglevel'].lower(),
+            ),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Malíček, version {}'.format(malicek),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Connected to {}/'.format(config['endpoint']),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Started on {}'.format(STARTED),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Run by {} <{}>'.format(config['admin'], config['email']),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Location: {}'.format(config['location']),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Encoding: {}'.format(config['encoding']),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Buffer size: {} bytes'.format(config['buffer']),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Fallback chat color: {}'.format(config['color']),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Refresh interval: {}s'.format(config['refresh']),
+        )
+        self.reply(
+            msg='{code} {user} :{message}',
+            code=IRC.RPL_INFO,
+            message='Request timeout: {}s'.format(config['timeout']),
+        )
+        self.reply(
+            msg='{code} {user} :End of INFO list.',
+            code=IRC.RPL_ENDOFINFO,
+        )
 
     def handle_servlist(self, args):
-        pass
+        """Handle SERVLIST commands.
+
+        Lists services connected to the server.  We don't have any.
+
+        :param args: [<mask> [<type>]]
+        """
+        if args:
+            if args.find(' ') != -1:
+                mask, servtype = args.split(' ', 1)
+                servtype = servtype or 'any'
+            else:
+                mask = args
+                servtype = 'any'
+        else:
+            mask = '*'
+            servtype = 'all'
+        self.reply(
+            msg='{code} {user} {mask] {servtype} :End of service listing',
+            code=IRC.RPL_SERVLISTEND,
+            mask=mask,
+            servtype=servtype,
+        )
 
     def handle_squery(self, args):
-        pass
+        """Handle SQUERY commands.
 
-    # FIXME: Should we update operators here?
+        Messaging services.  We don't have any services.  Parse the
+        input but say there is no such service, whatever it is.  It's
+        true.
+
+        :param args: <servicename> <text>
+        """
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        if args.find(' ') == -1:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        self.error(IRC.ERR_NOSUCHSERVICE)
+
     def handle_who(self, args):
         """Handle WHO commands.
 
@@ -1662,7 +2294,7 @@ class Client:
         channel is assumed, user otherwise.  To search for channels
         beginning with a wildcard, '#*foo' must be requested.
 
-        If 'o' is requested, the list returns only operators.
+        If 'o' is requested, the list returns only operators and above.
 
         For channels, we query every matching channel.  For user queries
         we aggregate the results and return them for channel '*',
@@ -1679,7 +2311,6 @@ class Client:
 
         :param args: [<mask> [o]]
         """
-        logger.debug(args)
         args = args or ''
         rooms = self.rooms()
         if not rooms:
@@ -1706,12 +2337,12 @@ class Client:
                         continue
                     self.reply(
                         msg=('{code} {user} #{channel} {link} alik.cz '
-                        '{server} {names} H{op} :0 {description}'),
+                        '{server} {names} H{prefix} :0 {description}'),
                         code=IRC.RPL_WHOREPLY,
                         channel=room['id'],
                         link=nick['link'],
                         names=(nick['name'],),
-                        op='@' if nick['admin'] else '',
+                        prefix=get_prefix(nick['admin']),
                         description='{}, {}, https://alik.cz/u/{}'.format(
                             nick['age'] or '?',
                             nick['sex'],
@@ -1761,7 +2392,6 @@ class Client:
 
         :param args: [target] <mask>[,<mask>]*
         """
-        logger.debug(args)
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
@@ -1770,20 +2400,34 @@ class Client:
     # FIXME: Implement this
     def handle_whowas(self, args):
     # This should query the profile page info, so blocked by Malicek
+    # Virtually identical to WHOIS but uses different resposse codes
         """Handle WHOWAS commands.
 
         Not implemented.
 
         :param args: <nick>[,<nick>]* [<count> [<target>]]
         """
-        logger.debug(args)
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
         self.error(IRC.ERR_UNKNOWNCOMMAND)
 
     def handle_kill(self, args):
-        pass
+        """Handle KILL commands.
+
+        Used to disconnect other users on nickname or other conflicts.
+        Not applicable.  Requires a server operator status.  Just parse
+        and refuse.
+
+        :param args: <nickname> <comment>
+        """
+        if not args:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        if args.find(' ') == -1:
+            self.error(IRC.ERR_NEEDMOREPARAMS)
+            return
+        irc.error(IRC.ERR_NOPRIVILEGES)
 
     def handle_ping(self, args):
         """Handle PING commands.
@@ -1797,7 +2441,6 @@ class Client:
 
         :param args: <server> [<server>]
         """
-        logger.debug(args)
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
@@ -1816,7 +2459,6 @@ class Client:
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
-        logger.debug(args)
 
     def handle_error(self, args):
         """Handle ERROR commands.
@@ -1831,10 +2473,28 @@ class Client:
         if not args:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
-        logger.debug(args)
 
     def handle_away(self, args):
-        pass
+        """Handle AWAY commands.
+
+        Sets or resets the user's away status.  We ignore the contents
+        of the message currently but at least set the mode.  This has no
+        impact on anything at the moment.
+
+        :param args: [:<message>]
+        """
+        if args:
+            self.modes.a = True
+            self.reply(
+                msg='{code} {user} :Please, come back...',
+                code=IRC.RPL_NOWAWAY,
+            )
+        else:
+            self.modes.a = False
+            self.reply(
+                msg='{code} {user} :Yay, welcome back!',
+                code=IRC.RPL_UNAWAY,
+            )
 
     def handle_rehash(self, args):
         """Handle REHASH commands.
@@ -1971,7 +2631,9 @@ def ircencode(identifier):
     :param nick: The original identifier
     :returns: Encoded identifier
     """
-    return identifier.replace('\x20', '\xa0')
+    return identifier.replace('\x20', '\xa0') \
+        if identifier is not None \
+        else None
 
 def ircdecode(identifier):
     """Decode IRC nicks into real nicks again.
@@ -1981,16 +2643,23 @@ def ircdecode(identifier):
     :param nick: The encoded identifier
     :returns: Decoded identifier
     """
-    return identifier.replace('\xa0', '\x20')
+    return identifier.replace('\xa0', '\x20') \
+        if identifier is not None \
+        else None
 
-def emoji(msg):
+def emoji(msg, use_emoji=True):
     """Replace Alík's emoticons with corresponding emojis.
 
-    These are not exact match but are close enough.
+    These are not exact match but are close enough.  If use_emoji is
+    false, we don't actually return emojis but rather some text forms.
+    This can be controlled via the 'e' user mode.
 
     :param msg: The original message
+    :param use_emoji: Convert to emoji if True
     :returns: Message with emoji substitutions
     """
+    if not use_emoji:
+        return msg
     msg = msg.replace('[:-)]', '🙂')
     msg = msg.replace('[:->]', '😀')
     msg = msg.replace('[:-D]', '😆')
@@ -2028,7 +2697,157 @@ def emoji(msg):
     msg = msg.replace('(8:o)', '🦛')
     msg = msg.replace('(8:°)', '🦛')
     msg = msg.replace('(ÍÍÍ)', '🍰')
+    msg = msg.replace('(prali)', '🦕')
     return msg
+
+def get_prefix(admin_list):
+    """Returns an IRC prefix for the given admin list
+
+    Examines the provided admin_list, as returned by Malíček, and
+    returns a corresponding IRC prefix.
+
+    Returns an empty string if the list is empty.
+
+    :param admin_list: List of admin modes
+    """
+    if 'rooms' in admin_list \
+        or 'master' in admin_list \
+        or 'guru' in admin_list:
+        return '@'
+    if 'chat' in admin_list:
+        return '+'
+    return ''
+
+def parse_mode(mode_string, user=False):
+    """Mode string parser.
+
+    This is a helper function which accepts MODE strings.
+
+    The original RFC specification is way too flexible and makes it
+    virtually impossible to distinguish unsigned queries from arguments,
+    so we only follow the 'Modern IRC' document here.  All modes must
+    have signs, arguments don't.
+
+    Arguments are taken as they are.  Modes may combines signs within
+    their blocks, e.g. '+ab-c' is valid.
+
+    We then process modes from left to right and pair them with
+    arguments from left to right, if they take any.  Arguments may
+    appear anywhere: after a cluster of modes or after each individual
+    mode.
+
+    For 'set or query' modes ('b', 'i') we ignore the sign if there are
+    no arguments.  In either case it's considered a query.
+
+    Modes can be specified multiple times, for instance to assign
+    multiple operators.
+
+    Examples:
+
+        +b foo
+        Bans foo
+        +bi foo
+        Bans foo and sets the channel as invite only
+        +b-i foo
+        Bans foo and unlocks the channel
+        -i+b foo
+        Same as above
+        +b foo -i
+        Same as above
+        +biI foo boys
+        Bans foo, sets the channel as invite only, boys allowed
+        +b foo +i +I boys
+        Same as above
+        +i +Ib boys foo
+        Same as above
+        +iboI foo bar girls
+        Also sets bar as the chanop
+        +oo-o foo bar baz
+        Make foo and bar operators, deop baz
+
+    The return value is tuple of two lists:
+
+        A list of simple mode objects in order they were specified.
+        Each has three properties: 'state', indicating True for '+' or
+        False for '-', mode, a single character indicating the mode
+        itself, and argument, a string representing the mode argument,
+        or None if no arguments are present.
+
+        And a list of single characters representing unknown modes.
+
+    The 'user' argument controls whether we're processing user or
+    channel modes, which may affect how arguments are processed.
+
+    :param mode_string: The MODE string after user or channel
+    :param user: True if handling user modes, False by default
+    :returns: A tuple of lists, or None if parsing failed
+    """
+    items = mode_string.split(' ')
+    modes = list()
+    arguments = list()
+    applied = list()
+    unknown = list()
+    for item in items:
+        if item[:1] in ('+', '-'):
+            for mode in item:
+                if mode in ('+', '-'):
+                    sign = mode
+                    continue
+                modes.append('{}{}'.format(sign, mode))
+        else:
+            arguments.append(item)
+    if not modes:
+        return None
+    for mode in modes:
+        state = True \
+            if mode.startswith('+') \
+            else False
+        mode = mode[1:]
+        if user:
+            if mode in ('e', 'i', 's', 'w'):
+                applied.append(types.SimpleNamespace(
+                    state=state,
+                    mode=mode,
+                    argument=None,
+                ))
+            elif mode in ('a', 'o', 'O', 'r'):
+                continue
+            else:
+                unknown.append(mode)
+        else:
+            if mode in ('b', 'I'):
+                # Query or set
+                applied.append(types.SimpleNamespace(
+                    state=state,
+                    mode=mode,
+                    argument=arguments.pop(0) \
+                        if arguments \
+                        else None,
+                ))
+            elif mode in ('o', 'Z'):
+                # Requires arguments
+                if not arguments:
+                    return None
+                applied.append(types.SimpleNamespace(
+                    state=state,
+                    mode=mode,
+                    argument=arguments.pop(0),
+                ))
+            elif mode in ('i', 'O'):
+                # Toggle or query  only
+                applied.append(types.SimpleNamespace(
+                    state=state,
+                    mode=mode,
+                    argument=None,
+                ))
+            elif mode in ('h', 'n', 't', 'v'):
+                # Recognized but ignored
+                continue
+            else:
+                unknown.append(mode)
+    if arguments:
+        return None
+    return applied, unknown
 
 def accept(sock):
     """Accept new connections.
@@ -2041,12 +2860,12 @@ def accept(sock):
     :param sock: Listening socket with the pending connection request
     """
     conn, addr = sock.accept()
-    logger.info('Accepting connection from %s', addr)
+    logger.info(addr)
     conn.setblocking(False)
     sel.register(
         conn,
         (selectors.EVENT_READ),
-        data=types.SimpleNamespace(buf=b'', client=Client(conn))
+        data=types.SimpleNamespace(buf=b'', client=Client(conn, addr[0]))
     )
 
 def handle(key, mask):
@@ -2064,12 +2883,26 @@ def handle(key, mask):
     sock = key.fileobj
     data = key.data
     if mask & selectors.EVENT_READ:
-        recv = sock.recv(config['buffer'])
-        if recv:
-            data.buf += recv
+        try:
+            recv = sock.recv(config['buffer'])
+        # We've seen ConnectionResetError and TimeoutError
+        except socket.error:
+            try:
+                sel.unregister(sock)
+                sock.close()
+            except Exception:
+                pass
+            return
         else:
-            sel.unregister(sock)
-            sock.close()
+            if recv:
+                data.buf += recv
+            else:
+                try:
+                    sel.unregister(sock)
+                    sock.close()
+                except Exception:
+                    pass
+                return
     while data.buf:
         pos = data.buf.find(b'\r\n')
         if pos != -1:
@@ -2079,11 +2912,16 @@ def handle(key, mask):
             continue
         buflength = len(data.buf)
         if buflength > 512:
-            logger.warning('Client message exceeding 512 bytes.')
-            data.client.do_error('Your message is too long for IRC.')
+            logger.warning(
+                '%s, client message too long: %d',
+                sock.getpeername()[0],
+                buflength,
+            )
         if buflength >= config['buffer'] and buflength > 512:
-            logger.error('The client does not seem to be speaking IRC.')
-            logger.error('Closing connection.')
+            logger.error(
+                '%s, protocol mismatch, terminating',
+                sock.getpeername()[0],
+            )
             data.client.do_error('Uh, this seems really wrong.  Buh-bye!')
             sel.unregister(sock)
             sock.close()
@@ -2100,6 +2938,10 @@ def load_config(configFile):
     global config
     defaults = {
         'server': 'mlck',
+        'admin': 'Unidentified administrator',
+        'email': 'admin@example.com',
+        'location': 'The Internet',
+        'motd': 'mlck.motd',
         'loglevel': 'INFO',
         'listen': '127.0.0.1',
         'port': 6667,
@@ -2112,20 +2954,20 @@ def load_config(configFile):
     }
     cnf = configparser.ConfigParser()
     if not os.path.isfile(configFile):
-        logger.critical('Configuration file "%s" not found.', configFile)
+        logger.critical('configuration file "%s" not found', configFile)
         sys.exit(1)
     try:
         cnf.read(configFile)
-    except:
-        logger.critical('Failed to parse the configuration file.')
+    except Exception:
+        logger.critical('failed to parse the configuration file')
         sys.exit(1)
     if not cnf.has_section('mlck'):
-        logger.critical('Configuration is missing the mlck section.')
+        logger.critical('configuration is missing the mlck section')
         sys.exit(1)
     try:
         # Strings
         for opt in ('server', 'loglevel', 'listen', 'encoding', \
-            'endpoint', 'color'):
+            'endpoint', 'color', 'admin', 'email', 'location', 'motd'):
             config[opt] = cnf.get('mlck', opt, fallback=defaults[opt])
         # Ints
         for opt in ('port', 'buffer'):
@@ -2134,11 +2976,11 @@ def load_config(configFile):
         for opt in ('refresh', 'timeout'):
             config[opt] = cnf.getfloat('mlck', opt, fallback=defaults[opt])
     except ValueError:
-        logger.critical('Failed parsing the configuration file.')
+        logger.critical('failed parsing the configuration file')
         sys.exit(1)
     loglevel = getattr(logging, config['loglevel'].upper())
     if not isinstance(loglevel, int):
-        logger.critical('Invalid log level configured.')
+        logger.critical('invalid log level configured')
         sys.exit(1)
     logger.setLevel(loglevel)
     if config['endpoint'].endswith('/'):
@@ -2179,7 +3021,7 @@ def main():
     sock.setblocking(False)
     sel.register(sock, selectors.EVENT_READ, data=None)
     logger.info('%s, %s starting...', config['server'], AGENT)
-    logger.info('Listening for connections on %s port %s.',
+    logger.info('listening for connections on %s, port %s',
         config['listen'], config['port'])
     while True:
         events = sel.select(timeout=None)
