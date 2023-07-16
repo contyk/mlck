@@ -344,6 +344,6 @@ See `mlck --help` for additional options.
 
 ### License
 
-Petr Šabata <contyk@contyk.dev>, 2020
+Petr Šabata <contyk@contyk.dev>, 2020-2023
 
 Licensed under MIT/X.  See `LICENSE` for details.
