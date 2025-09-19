@@ -586,7 +586,7 @@ class Client:
         elif code == IRC.ERR_NOTREGISTERED:
             response = response or 'You must log in to continue.'
         elif code == IRC.ERR_NOSUCHNICK:
-            respose = respose or 'Private messaging is unsupported.'
+            response = response or 'Private messaging is unsupported.'
         elif code == IRC.ERR_NOTEXTTOSEND:
             response = response or 'No message specified.'
         elif code in (IRC.ERR_CANNOTSENDTOCHAN, IRC.ERR_NOTONCHANNEL):
@@ -1153,7 +1153,7 @@ class Client:
         """
         if who != config['server']:
             who = '{}!{}@alik.cz'.format(who,
-                cache.links[sender] if sender in cache.links else '*')
+                cache.links[who] if who in cache.links else '*')
         self.send(
             msg=':{user} KICK {channel} {names} :{message}',
             user=who,
@@ -2427,7 +2427,7 @@ class Client:
         if args.find(' ') == -1:
             self.error(IRC.ERR_NEEDMOREPARAMS)
             return
-        irc.error(IRC.ERR_NOPRIVILEGES)
+        self.error(IRC.ERR_NOPRIVILEGES)
 
     def handle_ping(self, args):
         """Handle PING commands.
